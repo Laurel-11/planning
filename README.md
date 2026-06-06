@@ -48,12 +48,44 @@ AMAP_SECURITY_JS_CODE=
 
 前端默认调用同源 `/api/*`。如果部署平台支持 serverless/functions，可以实现同样路径；仓库中的 `functions/` 是 Cloudflare Pages Functions 版本。
 
-当前 Cloudflare Functions 已覆盖 `/config.js`、LLM 和高德地图相关接口；账号、会话和历史行程仍由 FastAPI + SQLite 实现。部署到 Cloudflare Pages 时有两种选择：
+Cloudflare Pages 部署不依赖 FastAPI 或 `serve.py`。线上只依赖：
 
-1. 保留完整 Python 后端：把 FastAPI 部署到支持 Python 的平台，并在 Cloudflare 环境变量里设置 `API_BASE_URL=https://你的后端域名`。
-2. 全部放在 Cloudflare：把账号和历史行程接口改写为 Pages Functions，并使用 Cloudflare D1 作为 SQL 数据库。
+- `frontend/` 静态页面
+- `functions/` Pages Functions
+- Cloudflare 环境变量
+- Cloudflare D1（binding 名称为 `DB`）
 
-若部署到其它平台，也可以复用同样接口约定，或设置 `API_BASE_URL` 指向独立后端。
+`frontend/_routes.json` 明确让 `/config.js` 和 `/api/*` 走 Pages Functions。正式部署时 `/config.js` 由 `functions/config.js` 动态生成，`frontend/config.js` 只保留为无密钥静态 fallback。
+
+FastAPI 只作为本地调试入口保留：本地运行 `python serve.py` 时继续由 FastAPI 同源提供前端、`/config.js` 和 `/api/*`。
+
+## Cloudflare Pages 配置
+
+Pages 项目连接仓库后，构建设置建议为：
+
+```txt
+Build command: 留空
+Build output directory: frontend
+Root directory: 仓库根目录
+Functions directory: functions
+```
+
+需要在 Cloudflare Pages 项目中配置环境变量：
+
+```txt
+LLM_API_KEY
+LLM_BASE_URL
+LLM_MODEL
+AMAP_WEB_SERVICE_KEY
+AMAP_WEB_SERVICE_BASE_URL
+AMAP_JS_API_KEY
+AMAP_SECURITY_JS_CODE
+API_BASE_URL=
+```
+
+`API_BASE_URL` 在 Cloudflare Pages 同源部署时留空。账号、会话、历史行程需要创建 Cloudflare D1 数据库，并绑定到 Pages 项目，binding 名称必须是 `DB`。不要上传 `.env`、`instance/` 或本地 SQLite 数据库。
+
+高德 Web JS Key 需要在高德控制台配置 Cloudflare Pages 域名或自定义域名白名单。
 
 ## 路线地图
 
@@ -128,6 +160,7 @@ docs/
   FRONTEND_AND_PYDANTIC_NOTES.md
 
 functions/
+  _auth.js               D1 账号、会话、历史行程工具
   api/                   Cloudflare Pages Functions API
   config.js              Cloudflare 环境变量生成前端配置
 
@@ -156,9 +189,9 @@ POST /api/history
 
 注册用户会被分配一个首字母头像颜色，保存在 `users.avatar_color`。注册用户的历史行程保存在 `trips` 表中；游客访问不写数据库，游客历史只存在当前页面内存里，刷新或离开页面后清空，并会重新出现登录/注册弹窗。
 
-当前 SQLite 账号库适用于 `serve.py` 本地调试或部署一个持久运行的 Python/FastAPI 后端。本地数据库默认在 `instance/leisure_done.sqlite3`，该目录和 `*.sqlite3` 已被 `.gitignore` 忽略，不需要也不应该上传到 Cloudflare。
+当前 SQLite 账号库仅用于 `serve.py` 本地调试。本地数据库默认在 `instance/leisure_done.sqlite3`，该目录和 `*.sqlite3` 已被 `.gitignore` 忽略，不需要也不应该上传到 Cloudflare。
 
-如果只部署到 Cloudflare Pages Functions，需要把账号和历史接口改接 Cloudflare D1，或把 `API_BASE_URL` 指向独立后端，否则 Pages Functions 版本不会共享这份 SQLite 数据库。D1 方案的表结构可按当前 SQLite schema 建：
+Cloudflare Pages Functions 使用 D1 保存账号、会话和历史行程。D1 binding 名称必须配置为 `DB`。Functions 会在请求时自动执行 `CREATE TABLE IF NOT EXISTS` 初始化；也可以提前在 D1 控制台执行同一份 schema：
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
@@ -194,7 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_trips_user_id_created_at
 ON trips(user_id, created_at DESC);
 ```
 
-在 Cloudflare Pages Functions 中把 D1 绑定命名为 `DB` 后，可通过 `context.env.DB.prepare(...).bind(...).run()` / `.first()` / `.all()` 访问 SQL。
+Pages Functions 通过 `context.env.DB.prepare(...).bind(...).run()` / `.first()` / `.all()` 访问 SQL。
 
 ## 主要接口
 
