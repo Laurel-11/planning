@@ -30,6 +30,7 @@
   --sidebar-w:  220px;
   --mob-tab-h:  60px;
   --transition: .2s cubic-bezier(.4,0,.2,1);
+  --leo-avatar-art: url("assets/leo-avatar.png.png");
 }
 
 html, body { height: 100%; overflow: hidden; }
@@ -153,19 +154,31 @@ body {
 
 /* Leo 头像（多处复用） */
 .leo-avatar, .leo-av-sm, .leo-av-msg {
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--green), #18b67a);
-  color: #fff;
-  font-weight: 700;
+  border-radius: 10px;
+  background-image: var(--leo-avatar-art);
+  background-size: cover;
+  background-position: center;
+  color: transparent;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 0;
   letter-spacing: 0;
+  box-shadow: 0 3px 10px rgba(34, 201, 138, .24);
 }
-.leo-avatar { width: 28px; height: 28px; font-size: 12px; }
-.leo-av-sm  { width: 24px; height: 24px; font-size: 11px; }
-.leo-av-msg { width: 30px; height: 30px; font-size: 12px; flex-shrink: 0; margin-top: 2px; }
+.leo-avatar { width: 28px; height: 28px; }
+.leo-av-sm  { width: 24px; height: 24px; border-radius: 8px; }
+.leo-av-msg { width: 30px; height: 30px; flex-shrink: 0; margin-top: 2px; }
+.leo-nav-icon {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background-image: var(--leo-avatar-art);
+  background-size: cover;
+  background-position: center;
+  flex-shrink: 0;
+}
 
 /* ════════════════════════════════════════════════════════
    MAIN CONTENT
@@ -391,6 +404,7 @@ body {
 }
 .analysis-col::-webkit-scrollbar { width: 4px; }
 .analysis-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.analysis-col [hidden] { display: none !important; }
 
 .ac-empty {
   flex: 1;
@@ -733,6 +747,83 @@ body {
 }
 .map-empty-icon { font-size: 36px; }
 
+/* Leo assistant page */
+#page-assistant {
+  flex-direction: column;
+  background: var(--surface);
+}
+.leo-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.leo-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 32px 22px 18px;
+}
+.leo-thread::-webkit-scrollbar { width: 4px; }
+.leo-thread::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.leo-thread .ask-bubble {
+  max-width: 76%;
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 12px 15px;
+  border-radius: 16px;
+}
+.leo-thread .ask-bubble.user {
+  background: #f0f2f5;
+  color: var(--text);
+  align-self: flex-end;
+  border-bottom-right-radius: 5px;
+}
+.leo-thread .ask-bubble.bot {
+  background: transparent;
+  color: var(--text);
+  align-self: flex-start;
+  padding-left: 0;
+}
+.leo-composer {
+  width: min(760px, calc(100% - 44px));
+  margin: 0 auto 24px;
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.leo-composer input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  color: var(--text);
+}
+.leo-composer button {
+  border: none;
+  border-radius: 10px;
+  background: var(--green);
+  color: #fff;
+  padding: 0 16px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.leo-composer button:hover { background: var(--green-d); }
+
 /* AMap overlays */
 .amap-pin {
   width: 30px;
@@ -934,51 +1025,6 @@ body {
 .relay-hint { text-align: center; font-size: 11px; color: var(--text-3); margin-top: 12px; }
 
 /* 追问卡 */
-.ask-card-inner {
-  display: flex;
-  flex-direction: column;
-  max-height: 75vh;
-  padding: 0;
-}
-.oc-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.oc-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 700;
-}
-.oc-close {
-  width: 28px; height: 28px;
-  border: none;
-  background: var(--bg);
-  border-radius: 50%;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 14px;
-  display: grid;
-  place-items: center;
-  transition: all var(--transition);
-}
-.oc-close:hover { background: var(--border); }
-
-.ask-chat {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 100px;
-  max-height: 320px;
-}
 .ask-bubble {
   font-size: 13px;
   line-height: 1.65;
@@ -999,39 +1045,6 @@ body {
   align-self: flex-start;
   border-bottom-left-radius: 4px;
 }
-
-.ask-input-row {
-  display: flex;
-  gap: 8px;
-  padding: 14px 16px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.ask-input-row input {
-  flex: 1;
-  border: 1.5px solid var(--border);
-  border-radius: 20px;
-  padding: 10px 15px;
-  font-size: 13px;
-  outline: none;
-  font-family: inherit;
-  background: var(--bg);
-  transition: all var(--transition);
-}
-.ask-input-row input:focus { border-color: var(--green); background: var(--surface); }
-.ask-input-row button {
-  border: none;
-  border-radius: 20px;
-  padding: 0 18px;
-  background: var(--green);
-  color: #fff;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all var(--transition);
-}
-.ask-input-row button:hover { background: var(--green-d); }
 
 /* ════════════════════════════════════════════════════════
    响应式 — 移动端 (≤ 768px)

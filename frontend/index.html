@@ -48,6 +48,10 @@
         <svg class="sb-icon" viewBox="0 0 24 24" fill="none"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-1.447-.894L15 9m0 8V9m0 0L9 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>路线地图</span>
       </button>
+      <button class="sb-item" data-page="assistant">
+        <span class="sb-icon leo-nav-icon"></span>
+        <span>Leo 助手</span>
+      </button>
       <button class="sb-item" data-page="discover">
         <svg class="sb-icon" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <span>灵感发现</span>
@@ -61,7 +65,7 @@
     <div class="sb-bottom">
       <div class="sb-loc">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5z" fill="#22c98a"/></svg>
-        望京商圈
+        天安门商圈
       </div>
       <div class="sb-leo">
         <div class="leo-avatar">L</div>
@@ -82,7 +86,7 @@
         </div>
         <span class="mob-title">闲时达</span>
       </div>
-      <div class="mob-loc">📍 望京</div>
+      <div class="mob-loc">📍 天安门</div>
     </header>
 
     <!-- 页面容器 -->
@@ -104,10 +108,7 @@
             <!-- 欢迎气泡 -->
             <div class="msg bot">
               <div class="leo-av-msg">L</div>
-              <div class="bubble">
-                你好！我是 <strong>Leo</strong>，闲时达的规划助手。<br>
-                说说你想怎么过这个下午，我来帮你安排好一切 🌿
-              </div>
+              <div class="bubble">你好！我是 <strong>Leo</strong>，闲时达的规划助手。<br>说说你想怎么过这个下午，我来帮你安排好一切 🌿</div>
             </div>
             <div class="quick-examples" id="examples">
               <button class="chip" data-text="今天下午是空的，想和老婆孩子出去玩几个小时，别离家太远。孩子5岁，老婆最近在减肥">👨‍👩‍👧 家庭 · 带老婆孩子</button>
@@ -151,11 +152,22 @@
         </div>
       </div>
 
+      <!-- ── Leo 助手页 ── -->
+      <div class="page" id="page-assistant">
+        <div class="leo-page">
+          <div class="leo-thread" id="askChat"></div>
+          <div class="leo-composer">
+            <input id="askInput" type="text" placeholder="问 Leo">
+            <button id="askSend">发送</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ── 发现页 ── -->
       <div class="page" id="page-discover">
         <div class="page-header">
           <div class="ph-title">灵感发现</div>
-          <div class="ph-sub">望京商圈 · 周末热门</div>
+          <div class="ph-sub">天安门商圈 · 周边热门</div>
         </div>
         <div class="discover-list" id="discoverList">
           <div class="disc-loading">加载中…</div>
@@ -183,6 +195,10 @@
         <svg class="ti" viewBox="0 0 24 24" fill="none"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-1.447-.894L15 9m0 8V9m0 0L9 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="tl">地图</span>
       </button>
+      <button class="tab" data-page="assistant">
+        <span class="ti leo-nav-icon"></span>
+        <span class="tl">Leo</span>
+      </button>
       <button class="tab" data-page="discover">
         <svg class="ti" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <span class="tl">发现</span>
@@ -200,23 +216,6 @@
 
 <div class="overlay-mask" id="relayMask" hidden>
   <div class="overlay-card relay-card-inner" id="relayCard"></div>
-</div>
-
-<div class="overlay-mask" id="askMask" hidden>
-  <div class="overlay-card ask-card-inner">
-    <div class="oc-header">
-      <div class="oc-title">
-        <div class="leo-av-sm">L</div>
-        Leo 助手
-      </div>
-      <button class="oc-close" id="askClose">✕</button>
-    </div>
-    <div class="ask-chat" id="askChat"></div>
-    <div class="ask-input-row">
-      <input id="askInput" type="text" placeholder="问路线、问建议…">
-      <button id="askSend">发送</button>
-    </div>
-  </div>
 </div>
 
 <script src="app.js"></script>

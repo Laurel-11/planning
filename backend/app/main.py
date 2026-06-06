@@ -60,11 +60,19 @@ class Coordinate(BaseModel):
 
 class WalkingBody(BaseModel):
     points: list[Coordinate]
+    city: str = "北京"
 
 
 class ChatBody(BaseModel):
     message: str
     context: str = ""   # 可选：当前方案摘要，给 LLM 上下文
+
+
+class LLMBody(BaseModel):
+    systemPrompt: str
+    userContent: str
+    jsonMode: bool = False
+    max_tokens: int = 2048
 
 
 # ============ 接口 ============
@@ -110,6 +118,41 @@ async def api_chat(body: ChatBody):
     return {"reply": reply}
 
 
+@app.post("/api/llm")
+async def api_llm(body: LLMBody):
+    """OpenAI-compatible LLM proxy. Keeps API keys server-side."""
+    from .config import settings
+    if not settings.LLM_API_KEY:
+        raise HTTPException(status_code=501, detail="LLM_API_KEY is not configured")
+
+    import httpx
+    payload = {
+        "model": settings.LLM_MODEL,
+        "max_tokens": body.max_tokens,
+        "messages": [
+            {"role": "system", "content": body.systemPrompt},
+            {"role": "user", "content": body.userContent},
+        ],
+    }
+    if body.jsonMode:
+        payload["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=40) as client:
+        resp = await client.post(
+            f"{settings.LLM_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.LLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        data = resp.json()
+
+    return {"content": data["choices"][0]["message"]["content"]}
+
+
 @app.get("/api/discover")
 async def api_discover():
     """发现页：热门场所 + 用户出发点坐标。"""
@@ -127,10 +170,24 @@ async def api_amap_walking(body: WalkingBody):
     total_duration = 0
     try:
         for start, end in zip(body.points, body.points[1:]):
-            leg = await amap.walking(start.model_dump(), end.model_dump())
+            start_point = start.model_dump()
+            end_point = end.model_dump()
+            leg = await amap.walking(start_point, end_point)
+            try:
+                bike = await amap.bicycling(start_point, end_point)
+            except Exception:
+                bike = None
+            try:
+                transit = await amap.transit(start_point, end_point, body.city)
+            except Exception:
+                transit = None
+            if bike:
+                leg["bicycling_duration"] = bike["duration"]
+            if transit:
+                leg["transit_duration"] = transit["duration"]
             legs.append({
-                "origin": start.model_dump(),
-                "destination": end.model_dump(),
+                "origin": start_point,
+                "destination": end_point,
                 **leg,
             })
             total_distance += leg["distance"]
@@ -151,12 +208,48 @@ async def api_amap_walking(body: WalkingBody):
 async def api_amap_place_search(
     keywords: str = Query(..., min_length=1),
     city: str = "北京",
+    types: str = "",
     page: int = Query(1, ge=1),
     offset: int = Query(10, ge=1, le=25),
 ):
     """Server-side AMap POI text search."""
     try:
-        return await amap.place_text_search(keywords, city=city, page=page, offset=offset)
+        return await amap.place_text_search(keywords, city=city, page=page, offset=offset, types=types)
+    except amap.AMapError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/amap/around")
+async def api_amap_around(
+    location: str = Query(..., min_length=3),
+    keywords: str = "",
+    types: str = "",
+    radius: int = Query(3000, ge=100, le=10000),
+    offset: int = Query(12, ge=1, le=25),
+):
+    """Server-side AMap nearby POI search."""
+    try:
+        return await amap.place_around(
+            location=location, keywords=keywords, types=types, radius=radius, offset=offset
+        )
+    except amap.AMapError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/amap/regeo")
+async def api_amap_regeo(lng: float, lat: float):
+    """Server-side AMap reverse geocoding."""
+    try:
+        return await amap.regeo(f"{lng},{lat}")
+    except amap.AMapError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/amap/weather")
+async def api_amap_weather(city: str = "北京"):
+    """Server-side AMap live weather."""
+    try:
+        return await amap.weather(city)
     except amap.AMapError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -174,6 +267,9 @@ async def health():
 
 if os.path.isdir(_FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
+    assets_dir = os.path.join(_FRONTEND_DIR, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/")
     async def index():
@@ -190,18 +286,11 @@ if os.path.isdir(_FRONTEND_DIR):
     @app.get("/config.js")
     async def frontend_config():
         from .config import settings
-        if settings.AMAP_JS_API_KEY:
-            return Response(
-                "window.APP_CONFIG = "
-                f"{{ AMAP_JS_API_KEY: {settings.AMAP_JS_API_KEY!r}, "
-                f"AMAP_KEY: {settings.AMAP_JS_API_KEY!r}, "
-                f"AMAP_SECURITY_JS_CODE: {settings.AMAP_SECURITY_JS_CODE!r} }};",
-                media_type="application/javascript",
-            )
-        config_path = os.path.join(_FRONTEND_DIR, "config.js")
-        if os.path.exists(config_path):
-            return FileResponse(config_path)
         return Response(
-            "window.APP_CONFIG = { AMAP_JS_API_KEY: '', AMAP_KEY: '', AMAP_SECURITY_JS_CODE: '' };",
+            "window.APP_CONFIG = "
+            f"{{ API_BASE_URL: {settings.API_BASE_URL!r}, "
+            f"AMAP_JS_API_KEY: {settings.AMAP_JS_API_KEY!r}, "
+            f"AMAP_KEY: {settings.AMAP_JS_API_KEY!r}, "
+            f"AMAP_SECURITY_JS_CODE: {settings.AMAP_SECURITY_JS_CODE!r} }};",
             media_type="application/javascript",
         )

@@ -24,6 +24,10 @@ _load_dotenv()
 
 
 class Settings:
+    # Optional public API base URL for split frontend/API deployments.
+    # Leave empty to let the browser call the same origin.
+    API_BASE_URL: str = os.getenv("API_BASE_URL", "")
+
     # User default location, used by mock planning data.
     DEFAULT_LOCATION: str = "望京"
 
