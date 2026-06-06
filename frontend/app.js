@@ -144,13 +144,13 @@ ${actPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.ra
 ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.rating}，人均¥${p.cost||'未知'}`).join('\n') || '暂无数据'}`;
 
   const planJson = await callDeepSeek(
-  const planJson = await callDeepSeek(
     `你是「闲时达」本地生活规划 AI Leo。根据用户需求和高德 POI 数据，生成 2 套个性化出行方案。
 
 只返回纯 JSON（不要任何 markdown 代码块），格式如下：
 {"intent_summary":"一句话总结","constraints":[{"key":"约束名","reason":"推断原因"}],"plans":[{"id":"plan_1","title":"方案名","highlights":["亮点1","亮点2","亮点3"],"total_minutes":180,"total_cost":200,"steps":[{"order":1,"slot":"活动","time_range":"14:00-15:30","venue_name":"场所名","venue_address":"详细地址","venue_lat":40.003,"venue_lng":116.472,"why":"具体理由"}]}]}
 
 规则：①优先从 POI 数据选真实场所 ②POI 为空时用你对北京望京的知识推断真实场所（坐标精确，望京 lat:39.99-40.01 lng:116.46-116.50）③why 必须结合用户约束 ④生成 2 套风格不同方案 ⑤total_cost 是整个行程人均费用（元）。`,
+    `用户需求：${userText}\n\n意图解析：${JSON.stringify(intent)}\n\n${poiContext}`,
     true
   );
 
