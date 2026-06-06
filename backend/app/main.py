@@ -1,4 +1,4 @@
-"""FastAPI 入口与路由层。
+﻿"""FastAPI 入口与路由层。
 
 接口：
 - POST /api/plan      : 自然语言 → 意图解析 + 多套方案
@@ -14,9 +14,9 @@ from __future__ import annotations
 import os
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,6 +24,7 @@ from .agent import orchestrator
 from .agent.llm import llm
 from .data.mock_db import DISCOVER_SPOTS, USER_HOME
 from .models.schemas import Audience, Plan, Scene, UserRequest
+from .services import amap
 
 app = FastAPI(title="今日拍板 · 本地探索Agent")
 
@@ -49,6 +50,16 @@ class ExecuteBody(BaseModel):
     session_id: str
     plan: Plan
     extras: list[str] = []
+
+
+class Coordinate(BaseModel):
+    lat: float
+    lng: float
+    name: str = ""
+
+
+class WalkingBody(BaseModel):
+    points: list[Coordinate]
 
 
 class ChatBody(BaseModel):
@@ -105,11 +116,58 @@ async def api_discover():
     return {"spots": DISCOVER_SPOTS, "home": USER_HOME}
 
 
+@app.post("/api/amap/walking")
+async def api_amap_walking(body: WalkingBody):
+    """Server-side AMap walking route planning for one or more route legs."""
+    if len(body.points) < 2:
+        raise HTTPException(status_code=400, detail="At least two points are required")
+
+    legs = []
+    total_distance = 0
+    total_duration = 0
+    try:
+        for start, end in zip(body.points, body.points[1:]):
+            leg = await amap.walking(start.model_dump(), end.model_dump())
+            legs.append({
+                "origin": start.model_dump(),
+                "destination": end.model_dump(),
+                **leg,
+            })
+            total_distance += leg["distance"]
+            total_duration += leg["duration"]
+    except amap.AMapError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "provider": "amap_web_service",
+        "distance": total_distance,
+        "duration": total_duration,
+        "legs": legs,
+    }
+
+
+@app.get("/api/amap/place-search")
+async def api_amap_place_search(
+    keywords: str = Query(..., min_length=1),
+    city: str = "北京",
+    page: int = Query(1, ge=1),
+    offset: int = Query(10, ge=1, le=25),
+):
+    """Server-side AMap POI text search."""
+    try:
+        return await amap.place_text_search(keywords, city=city, page=page, offset=offset)
+    except amap.AMapError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/api/health")
 async def health():
     from .config import settings
     return {"status": "ok", "llm_enabled": settings.llm_enabled,
-            "model": settings.LLM_MODEL}
+            "model": settings.LLM_MODEL,
+            "amap_web_service_enabled": settings.amap_web_service_enabled,
+            "amap_js_api_enabled": settings.amap_js_api_enabled}
 
 
 # ============ 前端托管 ============
@@ -120,3 +178,30 @@ if os.path.isdir(_FRONTEND_DIR):
     @app.get("/")
     async def index():
         return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
+
+    @app.get("/styles.css")
+    async def styles():
+        return FileResponse(os.path.join(_FRONTEND_DIR, "styles.css"))
+
+    @app.get("/app.js")
+    async def script():
+        return FileResponse(os.path.join(_FRONTEND_DIR, "app.js"))
+
+    @app.get("/config.js")
+    async def frontend_config():
+        from .config import settings
+        if settings.AMAP_JS_API_KEY:
+            return Response(
+                "window.APP_CONFIG = "
+                f"{{ AMAP_JS_API_KEY: {settings.AMAP_JS_API_KEY!r}, "
+                f"AMAP_KEY: {settings.AMAP_JS_API_KEY!r}, "
+                f"AMAP_SECURITY_JS_CODE: {settings.AMAP_SECURITY_JS_CODE!r} }};",
+                media_type="application/javascript",
+            )
+        config_path = os.path.join(_FRONTEND_DIR, "config.js")
+        if os.path.exists(config_path):
+            return FileResponse(config_path)
+        return Response(
+            "window.APP_CONFIG = { AMAP_JS_API_KEY: '', AMAP_KEY: '', AMAP_SECURITY_JS_CODE: '' };",
+            media_type="application/javascript",
+        )

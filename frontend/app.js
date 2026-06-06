@@ -1,4 +1,4 @@
-// 闲时达 · Leisure Done  —  v3 UI
+﻿// 闲时达 · Leisure Done  —  v3 UI
 // 四页 SPA：对话规划 / 路线地图 / 灵感发现 / 历史行程
 // -------------------------------------------------------
 
@@ -39,6 +39,188 @@ const acContent   = $('acContent');
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function scrollDown(){ chat.scrollTop = chat.scrollHeight; }
 function node(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
+const IS_FILE_MODE = window.location.protocol === 'file:';
+const IS_BACKEND_ORIGIN = (
+  window.location.protocol === 'http:' &&
+  ['127.0.0.1', 'localhost'].includes(window.location.hostname) &&
+  window.location.port === '8848'
+);
+const USE_MOCK_API = IS_FILE_MODE || !IS_BACKEND_ORIGIN;
+const BACKEND_API_ORIGIN = 'http://127.0.0.1:8848';
+
+async function apiJson(url, options = {}){
+  if(!USE_MOCK_API){
+    const response = await fetch(url, options);
+    if(!response.ok) throw new Error(`Request failed: ${response.status}`);
+    return response.json();
+  }
+
+  if(url.startsWith('/api/')){
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      const response = await fetch(`${BACKEND_API_ORIGIN}${url}`, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if(response.ok) return response.json();
+    } catch(e) {
+      // Fall back to local mock when the backend is not running.
+    }
+  }
+
+  if(USE_MOCK_API){
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return mockApi(url, options);
+  }
+}
+
+let amapReadyPromise = null;
+
+function getAmapConfig(){ return window.APP_CONFIG || {}; }
+function toAmapPosition(point){ return [point.lng, point.lat]; }
+
+function ensureAmapReady(){
+  if(window.AMap) return Promise.resolve(window.AMap);
+  if(amapReadyPromise) return amapReadyPromise;
+  const config = getAmapConfig();
+  const amapJsKey = config.AMAP_JS_API_KEY || config.AMAP_KEY;
+  if(!amapJsKey) return Promise.reject(new Error('Missing AMAP_JS_API_KEY'));
+  if(config.AMAP_SECURITY_JS_CODE){
+    window._AMapSecurityConfig = { securityJsCode: config.AMAP_SECURITY_JS_CODE };
+  }
+  amapReadyPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(amapJsKey)}&plugin=AMap.Walking`;
+    script.async = true;
+    script.onload = () => window.AMap ? resolve(window.AMap) : reject(new Error('AMap failed to load'));
+    script.onerror = () => reject(new Error('AMap script failed'));
+    document.head.appendChild(script);
+  });
+  return amapReadyPromise;
+}
+
+function renderMapUnavailable(){
+  const mapEl = $('map');
+  mapEl.innerHTML = `
+    <div class="map-empty amap-missing">
+      <div class="map-empty-icon">🗺️</div>
+      <div>需要配置高德 AMAP_JS_API_KEY</div>
+    </div>`;
+  mapTitle.textContent = '高德地图';
+  mapMeta.textContent = '等待配置高德 Web JS API Key';
+}
+
+function clearAmap(){
+  if(!S.mapInstance) return;
+  S.mapInstance.clearMap();
+  S.mapLayers = [];
+}
+
+function createAmapMarker(point, content, title){
+  const marker = new AMap.Marker({
+    position: toAmapPosition(point),
+    title,
+    content,
+    anchor: 'bottom-center',
+  });
+  marker.setMap(S.mapInstance);
+  S.mapLayers.push(marker);
+  return marker;
+}
+
+const MOCK_SPOTS = [
+  {id:1,name:'望京小街',category:'citywalk',heat:96,tip:'轻松逛吃，离家近，适合下午随走随停',price:0,duration_min:80,lat:40.0032,lng:116.4718,img_emoji:'街'},
+  {id:2,name:'麒麟新天地亲子乐园',category:'亲子活动',heat:91,tip:'孩子有消耗体力的空间，家长也能坐下休息',price:88,duration_min:90,lat:39.9987,lng:116.4662,img_emoji:'乐'},
+  {id:3,name:'轻食餐厅 Green Table',category:'轻食餐厅',heat:87,tip:'有低卡套餐和儿童椅，适合减脂期晚餐',price:76,duration_min:60,lat:40.0014,lng:116.4765,img_emoji:'餐'},
+];
+
+function mockPlanResponse(text = ''){
+  const isFriends = /朋友|同事|聚会|团建|哥们|姐妹|4|四/.test(text);
+  const isFamily = /老婆|老公|孩子|宝宝|家庭|亲子|妻子|丈夫/.test(text);
+  const scene = isFamily ? 'family' : isFriends ? 'friends' : 'solo';
+  const partySize = isFamily ? 3 : isFriends ? 4 : 1;
+  const activity = {
+    id:'mock_activity', name:'麒麟新天地亲子乐园', category:'亲子活动',
+    distance_km:1.2, travel_minutes:12, rating:4.7, price_per_person:88,
+    tags:['亲子友好','不远','可预约'], kid_friendly:true, has_reservation:true,
+    queue_minutes:10, description:'适合 5 岁孩子放电', address:'望京麒麟新天地 B1',
+    lat:39.9987, lng:116.4662,
+  };
+  const restaurant = {
+    id:'mock_restaurant', name:'Green Table 轻食餐厅', category:'餐厅',
+    distance_km:0.7, travel_minutes:8, rating:4.6, price_per_person:76,
+    tags:['低卡','儿童椅','近'], kid_friendly:true, has_reservation:true,
+    queue_minutes:5, description:'低卡套餐和儿童餐都比较稳', address:'望京小街 2 层',
+    lat:40.0014, lng:116.4765, cuisine:'轻食', low_cal_options:true,
+    has_kid_seat:true, has_private_room:false,
+  };
+  const plan = {
+    id: scene === 'family' ? 'mock_family_kid' : scene === 'friends' ? 'mock_friends' : 'mock_solo',
+    title: scene === 'family' ? '亲子优先方案' : scene === 'friends' ? '朋友聚会方案' : '轻松探索方案',
+    theme: scene === 'family' ? 'kid_first' : scene === 'friends' ? 'value_first' : 'solo_light',
+    total_cost:340, total_minutes:210,
+    highlights: scene === 'family'
+      ? ['离家近','孩子能放电','晚餐有低卡选项']
+      : scene === 'friends'
+        ? ['适合聊天聚会','人均可控','路线集中']
+        : ['节奏轻松','适合一个人逛','路线集中'],
+    steps:[
+      {order:1,slot:'活动',time_range:'14:30-16:00',venue:activity,why:'距离近，孩子有活动空间，排队时间可控'},
+      {order:2,slot:'正餐',time_range:'16:20-17:20',venue:restaurant,why:'有低卡餐和儿童椅，兼顾减脂和带娃'}
+    ]
+  };
+  return {
+    session_id:'file_demo',
+    intent:{
+      scene,
+      members: scene === 'family' ? [{role:'spouse',note:'最近在减肥'},{role:'child',age:5}] : [],
+      party_size: partySize,
+      duration_hours:3.5,
+      start_time:'14:30',
+      location:'望京',
+      raw_text:'',
+      constraints:[
+        {key:'max_travel_minutes',value:'15',source:'inferred',reason:'你提到别太远，优先选 15 分钟内'},
+        {key:'kid_friendly',value:'true',source:'inferred',reason:'同行有 5 岁孩子，需要亲子友好'},
+        {key:'low_cal_diet',value:'true',source:'inferred',reason:'老婆最近在减肥，晚餐优先轻食低卡'}
+      ]
+    },
+    plans:[plan],
+    recommended_plan_id:plan.id,
+  };
+}
+
+function mockApi(url, options){
+  if(url.includes('/api/plan')) {
+    let text = '';
+    try { text = JSON.parse(options.body || '{}').text || ''; } catch(e) {}
+    return mockPlanResponse(text);
+  }
+  if(url.includes('/api/discover')) return {spots:MOCK_SPOTS, home:{lat:40.0000,lng:116.4700,name:'望京'}};
+  if(url.includes('/api/relay')) return {
+    audience:'spouse',
+    headline:'这个安排离家近、晚餐也照顾减脂，不会折腾。',
+    plan_id:'mock_family_kid',
+    focus_points:['路程短，孩子累了也好撤','晚餐有低卡选项','活动和吃饭都不用久等'],
+    quick_actions:['同意，就按这个来','想再轻松一点','晚餐换一家']
+  };
+  if(url.includes('/api/execute')) return {
+    all_success:true,
+    items:[
+      {action:'活动预约',target:'麒麟新天地亲子乐园',status:'success',detail:'已生成模拟预约'},
+      {action:'餐厅订位',target:'Green Table 轻食餐厅',status:'success',detail:'已生成模拟订位'}
+    ],
+    itinerary:{
+      summary:'下午亲子活动加轻食晚餐，轻松不远。',
+      timeline:['14:30 亲子乐园','16:20 轻食晚餐'],
+      share_text:'今天下午：14:30 去亲子乐园，16:20 吃轻食晚餐，路线都在望京附近。'
+    }
+  };
+  if(url.includes('/api/chat')) return {reply:'建议步行或骑行，两个点都在望京附近，路上大约 8 到 12 分钟。'};
+  return {};
+}
 
 // 带 Leo 头像的 bot 消息
 function msgBot(html){
@@ -90,11 +272,10 @@ async function doPlan(text){
 
   let data;
   try {
-    const r = await fetch('/api/plan', {
+    data = await apiJson('/api/plan', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({text}),
     });
-    data = await r.json();
   } catch(e){ hideThink(); msgBot('网络出错了，请重试。'); return; }
   hideThink();
 
@@ -114,6 +295,7 @@ function sceneLabel(intent){
   if(intent.scene==='family'){
     return intent.members?.some(m=>m.role==='child') ? `全家 ${intent.party_size} 人` : '二人出行';
   }
+  if(intent.scene==='solo') return '一个人轻松出行';
   return `朋友局 ${intent.party_size} 人`;
 }
 
@@ -250,95 +432,173 @@ function openMapForVenue(venueId){
 }
 window.openMapForVenue = openMapForVenue;
 
-// ===== 地图页 =====
-function initMapPage(){
-  if(!S.mapInstance){
-    S.mapInstance = L.map('map').setView([40.0000,116.4700],14);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-      attribution:'© OpenStreetMap', maxZoom:19
-    }).addTo(S.mapInstance);
+// ===== AMap page =====
+async function initMapPage(){
+  try {
+    await ensureAmapReady();
+  } catch(e) {
+    renderMapUnavailable();
+    return;
   }
-  S.mapLayers.forEach(l=>S.mapInstance.removeLayer(l));
-  S.mapLayers = [];
+
+  if(!S.mapInstance){
+    S.mapInstance = new AMap.Map('map', {
+      zoom: 14,
+      center: [116.4700, 40.0000],
+      viewMode: '2D',
+    });
+  }
+  clearAmap();
 
   const plan = S.currentPlan;
   if(!plan || !plan.steps.length){
     mapTitle.textContent='路线地图';
     mapMeta.textContent='选好方案后查看路线';
     mapSteps.innerHTML=`<div class="map-empty"><div class="map-empty-icon">🗺️</div><div>在规划页选择方案后<br>点击「看路线」即可显示全程</div></div>`;
-    setTimeout(()=>S.mapInstance.invalidateSize(),50);
+    await renderDiscoverMarkers();
     return;
   }
 
   mapTitle.textContent = plan.title || '路线地图';
 
-  const home = {lat:40.0000, lng:116.4700};
-  const homeIcon = L.divIcon({
-    html:'<div style="background:#22c98a;color:#fff;border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font-size:14px;box-shadow:0 2px 8px rgba(34,201,138,.4)">🏠</div>',
-    iconSize:[30,30], className:'', iconAnchor:[15,30]
-  });
-  S.mapLayers.push(L.marker([home.lat,home.lng],{icon:homeIcon})
-    .bindPopup('<div class="map-popup"><strong>出发点</strong><br>📍 望京</div>')
-    .addTo(S.mapInstance));
+  const home = {lat:40.0000, lng:116.4700, name:'望京'};
+  createAmapMarker(home, '<div class="amap-pin home">🏠</div>', '出发点');
 
-  const points = [[home.lat,home.lng]];
+  const routePoints = [home];
   const stepCards = [];
 
   plan.steps.forEach((step,i)=>{
     const v = step.venue;
     if(!v.lat||!v.lng) return;
-    const icon = L.divIcon({
-      html:`<div style="background:${i===0?'#22c98a':'#ff8c42'};color:#fff;border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font-weight:700;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.25)">${i+1}</div>`,
-      iconSize:[30,30], className:'', iconAnchor:[15,30]
-    });
-    S.mapLayers.push(L.marker([v.lat,v.lng],{icon})
-      .bindPopup(`<div class="map-popup"><strong>${esc(v.name)}</strong><br>${esc(step.slot)} · ${esc(step.time_range)}<br>📍 ${esc(v.address||'')}<br>⭐ ${v.rating} · 人均 ¥${v.price_per_person}</div>`)
-      .addTo(S.mapInstance));
-    points.push([v.lat,v.lng]);
-
-    const prev = points[points.length-2];
-    const dist = calcDist(prev[0],prev[1],v.lat,v.lng);
-    const walkMin = Math.round(dist/80);
-    stepCards.push(`<div class="map-step-card">
+    createAmapMarker(v, `<div class="amap-pin">${i+1}</div>`, v.name);
+    routePoints.push(v);
+    stepCards.push(`<div class="map-step-card" id="route-leg-${i}">
       <div class="ms-num">${i+1}</div>
       <div class="ms-body">
         <div class="ms-name">${esc(step.slot)} · ${esc(v.name)}</div>
         <div class="ms-addr">📍 ${esc(v.address||'')}</div>
-        <div class="ms-dist">🚶 距上一点 ${dist<1000?dist+'m':(dist/1000).toFixed(1)+'km'}，步行约 ${walkMin} 分钟</div>
+        <div class="ms-dist">高德路线规划中...</div>
       </div>
     </div>`);
   });
 
-  if(points.length>1){
-    const poly = L.polyline(points,{color:'#22c98a',weight:3,opacity:.85,dashArray:'8,5'}).addTo(S.mapInstance);
-    S.mapLayers.push(poly);
-    S.mapInstance.fitBounds(poly.getBounds(),{padding:[24,24]});
-  }
-
-  mapMeta.textContent=`${plan.steps.length} 个站点 · 全程约 ${plan.total_minutes} 分钟`;
+  mapMeta.textContent=`${plan.steps.length} 个站点 · 高德步行路线规划中`;
   mapSteps.innerHTML = stepCards.join('')+`
     <div style="padding:6px 2px 2px">
       <button class="btn btn-primary" style="width:100%" onclick="openAskFromMap()">💬 问 Leo 路线建议</button>
     </div>`;
 
-  setTimeout(()=>S.mapInstance.invalidateSize(),50);
+  const routeStats = await renderAmapWalkingRoute(routePoints);
+  if(routeStats.distance > 0){
+    mapMeta.textContent = `${plan.steps.length} 个站点 · 高德步行约 ${formatDistance(routeStats.distance)} · ${Math.ceil(routeStats.duration/60)} 分钟`;
+  } else {
+    mapMeta.textContent=`${plan.steps.length} 个站点 · 高德路线规划失败，已显示站点`;
+  }
+  S.mapInstance.setFitView();
+}
+
+async function renderDiscoverMarkers(){
+  try {
+    const data = await apiJson('/api/discover');
+    data.spots.forEach((s)=>{
+      createAmapMarker(s, '<div class="amap-pin discover">•</div>', s.name);
+    });
+    S.mapInstance.setFitView();
+  } catch(e) {}
+}
+
+async function renderAmapWalkingRoute(points){
+  const backendRoute = await fetchBackendWalkingRoute(points);
+  if(backendRoute?.ok){
+    renderBackendRoutePolyline(backendRoute);
+    backendRoute.legs.forEach((leg, i)=>{
+      const distNode = $(`route-leg-${i}`)?.querySelector('.ms-dist');
+      if(distNode) distNode.textContent = `后端高德步行 ${formatDistance(leg.distance)}，约 ${Math.ceil(leg.duration/60)} 分钟`;
+    });
+    return {
+      distance: Number(backendRoute.distance || 0),
+      duration: Number(backendRoute.duration || 0),
+    };
+  }
+
+  let totalDistance = 0;
+  let totalDuration = 0;
+  if(points.length < 2) return {distance:0, duration:0};
+
+  for(let i=1; i<points.length; i++){
+    const leg = await searchAmapWalking(points[i-1], points[i]);
+    const distNode = $(`route-leg-${i-1}`)?.querySelector('.ms-dist');
+    if(leg.ok){
+      totalDistance += leg.distance;
+      totalDuration += leg.duration;
+      if(distNode) distNode.textContent = `高德步行 ${formatDistance(leg.distance)}，约 ${Math.ceil(leg.duration/60)} 分钟`;
+    } else if(distNode) {
+      distNode.textContent = '高德路线规划失败，已保留站点';
+    }
+  }
+  return {distance:totalDistance, duration:totalDuration};
+}
+
+async function fetchBackendWalkingRoute(points){
+  try {
+    return await apiJson('/api/amap/walking', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({points}),
+    });
+  } catch(e) {
+    return null;
+  }
+}
+
+function renderBackendRoutePolyline(route){
+  route.legs?.forEach((leg)=>{
+    const path = (leg.polyline || []).map(p => [p.lng, p.lat]);
+    if(path.length < 2) return;
+    const polyline = new AMap.Polyline({
+      path,
+      strokeColor: '#22c98a',
+      strokeWeight: 6,
+      strokeOpacity: 0.88,
+      lineJoin: 'round',
+      lineCap: 'round',
+    });
+    polyline.setMap(S.mapInstance);
+    S.mapLayers.push(polyline);
+  });
+}
+
+function searchAmapWalking(start, end){
+  return new Promise(resolve => {
+    const walking = new AMap.Walking({
+      map: S.mapInstance,
+      hideMarkers: true,
+    });
+    walking.search(toAmapPosition(start), toAmapPosition(end), (status, result) => {
+      const route = result?.routes?.[0];
+      if(status === 'complete' && route){
+        resolve({
+          ok: true,
+          distance: Number(route.distance || 0),
+          duration: Number(route.time || route.duration || 0),
+        });
+      } else {
+        resolve({ok:false, distance:0, duration:0});
+      }
+    });
+  });
+}
+
+function formatDistance(meters){
+  return meters < 1000 ? `${Math.round(meters)}m` : `${(meters/1000).toFixed(1)}km`;
 }
 
 window.openAskFromMap = ()=>openAsk();
-
-function calcDist(lat1,lng1,lat2,lng2){
-  const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLng=(lng2-lng1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
-}
-
-// ===== 发现页 =====
 async function initDiscoverPage(){
   if(discoverList.dataset.loaded) return;
   discoverList.dataset.loaded='1';
   try {
-    const r = await fetch('/api/discover');
-    const data = await r.json();
+    const data = await apiJson('/api/discover');
     renderDiscover(data.spots);
   } catch(e){
     discoverList.innerHTML='<div class="disc-loading" style="color:var(--red)">加载失败，请重试</div>';
@@ -427,11 +687,10 @@ window.histRerun = (id)=>{
 async function openRelay(plan, audience){
   S.currentPlan = plan;
   try {
-    const r = await fetch('/api/relay',{
+    const card = await apiJson('/api/relay',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({plan,audience,scene:S.scene}),
     });
-    const card = await r.json();
     const focus = card.focus_points.map(f=>`<div class="rfocus">${esc(f)}</div>`).join('');
     const actions = card.quick_actions.map((a,i)=>
       `<button class="ra ${i===0?'primary':'sec'}" data-i="${i}">${esc(a)}</button>`).join('');
@@ -498,11 +757,10 @@ async function doExecute(plan){
   showThink('Leo 正在并行下单：预约餐厅、购票、安排惊喜…');
   let res;
   try {
-    const r = await fetch('/api/execute',{
+    res = await apiJson('/api/execute',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({session_id:S.sessionId,plan,extras:S.extras}),
     });
-    res = await r.json();
   } catch(e){ hideThink(); msgBot('执行出错，请重试。'); return; }
   hideThink();
   renderExecResult(res, plan);
@@ -559,11 +817,11 @@ async function sendAsk(){
   askChat.appendChild(loading);
   askChat.scrollTop=askChat.scrollHeight;
   try {
-    const r = await fetch('/api/chat',{
+    const data = await apiJson('/api/chat',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:msg,context:askContext}),
     });
-    loading.textContent=(await r.json()).reply;
+    loading.textContent=data.reply;
   } catch(e){ loading.textContent='暂时无法回答，请稍后重试。'; }
   askChat.scrollTop=askChat.scrollHeight;
 }
@@ -579,19 +837,5 @@ sendBtn.onclick=submit;
 inputEl.onkeydown=e=>{ if(e.key==='Enter') submit(); };
 document.querySelectorAll('.chip').forEach(c=>{ c.onclick=()=>doPlan(c.dataset.text); });
 
-// ===== 初始化地图 =====
-setTimeout(()=>{
-  if(typeof L==='undefined') return;
-  S.mapInstance=L.map('map').setView([40.0000,116.4700],14);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(S.mapInstance);
-  L.marker([40.0000,116.4700],{icon:L.divIcon({html:'<div style="background:#22c98a;color:#fff;border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font-size:14px;box-shadow:0 2px 8px rgba(34,201,138,.4)">🏠</div>',iconSize:[30,30],className:'',iconAnchor:[15,30]})})
-    .bindPopup('<div class="map-popup"><strong>出发点</strong><br>📍 望京</div>')
-    .addTo(S.mapInstance);
-  fetch('/api/discover').then(r=>r.json()).then(({spots})=>{
-    spots.forEach(s=>{
-      L.circleMarker([s.lat,s.lng],{radius:6,color:'#22c98a',fillColor:'#22c98a',fillOpacity:.4,weight:2})
-        .bindPopup(`<div class="map-popup"><strong>${esc(s.name)}</strong><br>${s.img_emoji} ${esc(s.tip)}</div>`)
-        .addTo(S.mapInstance);
-    });
-  }).catch(()=>{});
-},300);
+// ===== Initialize AMap =====
+initMapPage();
