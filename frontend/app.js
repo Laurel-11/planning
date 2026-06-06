@@ -242,6 +242,16 @@ ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.r
     key: c.key || 'custom', value: 'true', source: 'inferred', reason: c.reason || ''
   }));
 
+  // 推理步骤（供右侧面板展示）
+  const sceneLabel = {'family':'家庭出行','friends':'朋友聚会','couple':'二人','solo':'独自'}[intent.scene] || '出行';
+  const poiHit = actPois.length + foodPois.length;
+  const reasoning_steps = [
+    { title: '识别场景', detail: `${sceneLabel}，${intent.party_size || 2}人，目标时长约 ${intent.duration_hours || 4} 小时` },
+    { title: '高德 POI 搜索', detail: poiHit > 0 ? `找到 ${actPois.length} 个活动场所、${foodPois.length} 个餐厅` : '网络受限，由 Leo 凭知识推断场所' },
+    { title: '约束推断', detail: constraints.length ? constraints.map(c=>c.reason).slice(0,2).join('；') : '无特殊约束，自由规划' },
+    { title: '方案生成', detail: `生成 ${plans.length} 套方案，推荐「${plans[0]?.title || ''}」` },
+  ];
+
   return {
     session_id: 'ai_' + Date.now(),
     intent: {
@@ -256,6 +266,7 @@ ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.r
     },
     plans,
     recommended_plan_id: plans[0]?.id || '',
+    reasoning_steps,
   };
 }
 
@@ -329,9 +340,16 @@ function createAmapMarker(point, content, title){
 }
 
 const MOCK_SPOTS = [
-  {id:1,name:'望京小街',category:'citywalk',heat:96,tip:'轻松逛吃，离家近，适合下午随走随停',price:0,duration_min:80,lat:40.0032,lng:116.4718,img_emoji:'街'},
-  {id:2,name:'麒麟新天地亲子乐园',category:'亲子活动',heat:91,tip:'孩子有消耗体力的空间，家长也能坐下休息',price:88,duration_min:90,lat:39.9987,lng:116.4662,img_emoji:'乐'},
-  {id:3,name:'轻食餐厅 Green Table',category:'轻食餐厅',heat:87,tip:'有低卡套餐和儿童椅，适合减脂期晚餐',price:76,duration_min:60,lat:40.0014,lng:116.4765,img_emoji:'餐'},
+  {id:'d1',name:'望京 SOHO 打卡',category:'网红地标',heat:96,tip:'周末下午光线最美，适合出片',price:0,duration_min:60,lat:39.9960,lng:116.4899,img_emoji:'🏙️'},
+  {id:'d2',name:'阜通小吃街夜市',category:'美食',heat:95,tip:'周六晚上最热闹，边走边吃',price:50,duration_min:90,lat:40.0012,lng:116.4750,img_emoji:'🍢'},
+  {id:'d3',name:'绿堤公园亲子骑行',category:'亲子',heat:88,tip:'免费带娃遛弯，可租亲子车',price:0,duration_min:60,lat:40.0055,lng:116.4650,img_emoji:'🌿'},
+  {id:'d4',name:'798艺术区涂鸦巡游',category:'文艺',heat:92,tip:'免费逛，多个画廊展览',price:0,duration_min:180,lat:39.9839,lng:116.4973,img_emoji:'🎨'},
+  {id:'d5',name:'朝阳公园湖边漫步',category:'公园',heat:90,tip:'北京最大城市公园，周末人气高',price:5,duration_min:120,lat:39.9340,lng:116.4721,img_emoji:'🚴'},
+  {id:'d6',name:'三里屯太古里逛街',category:'购物',heat:98,tip:'北京时尚地标，逛完正好吃饭',price:0,duration_min:150,lat:39.9325,lng:116.4562,img_emoji:'🛍️'},
+  {id:'d7',name:'奥林匹克公园夜景',category:'地标',heat:89,tip:'鸟巢夜晚亮灯超壮观，免费参观',price:0,duration_min:90,lat:40.0060,lng:116.3910,img_emoji:'🏟️'},
+  {id:'d8',name:'南锣鼓巷胡同游',category:'历史文化',heat:87,tip:'老北京胡同风情，冰糖葫芦好吃',price:50,duration_min:120,lat:39.9384,lng:116.4001,img_emoji:'🏮'},
+  {id:'d9',name:'望京小街夜生活',category:'夜生活',heat:91,tip:'夜晚灯光美，网红咖啡馆集中地',price:40,duration_min:80,lat:40.0032,lng:116.4718,img_emoji:'🌃'},
+  {id:'d10',name:'欢乐谷主题乐园',category:'主题乐园',heat:94,tip:'朋友家庭都适合，刺激好玩',price:280,duration_min:360,lat:39.9050,lng:116.4730,img_emoji:'🎢'},
 ];
 
 function mockPlanResponse(text = ''){
@@ -397,25 +415,80 @@ function mockApi(url, options){
     return mockPlanResponse(text);
   }
   if(url.includes('/api/discover')) return {spots:MOCK_SPOTS, home:{lat:40.0000,lng:116.4700,name:'望京'}};
-  if(url.includes('/api/relay')) return {
-    audience:'spouse',
-    headline:'这个安排离家近、晚餐也照顾减脂，不会折腾。',
-    plan_id:'mock_family_kid',
-    focus_points:['路程短，孩子累了也好撤','晚餐有低卡选项','活动和吃饭都不用久等'],
-    quick_actions:['同意，就按这个来','想再轻松一点','晚餐换一家']
-  };
-  if(url.includes('/api/execute')) return {
-    all_success:true,
-    items:[
-      {action:'活动预约',target:'麒麟新天地亲子乐园',status:'success',detail:'已生成模拟预约'},
-      {action:'餐厅订位',target:'Green Table 轻食餐厅',status:'success',detail:'已生成模拟订位'}
-    ],
-    itinerary:{
-      summary:'下午亲子活动加轻食晚餐，轻松不远。',
-      timeline:['14:30 亲子乐园','16:20 轻食晚餐'],
-      share_text:'今天下午：14:30 去亲子乐园，16:20 吃轻食晚餐，路线都在望京附近。'
-    }
-  };
+
+  // 接力卡：根据实际 plan + audience 动态生成，不再硬编码
+  if(url.includes('/api/relay')) {
+    let body = {};
+    try { body = JSON.parse(options?.body || '{}'); } catch(e) {}
+    const { plan, audience } = body;
+    const steps = plan?.steps || [];
+    const isFriends = audience === 'friends';
+    const focus = steps.map(s => {
+      const v = s.venue || {};
+      if(isFriends){
+        return `📍 ${s.slot}：${v.name}，人均 ¥${v.price_per_person || '?'}`;
+      } else {
+        const notes = [
+          v.low_cal_options ? '🥗 低卡可选' : '',
+          v.has_kid_seat    ? '🪑 有儿童椅' : '',
+          v.kid_friendly    ? '🧒 亲子友好' : '',
+        ].filter(Boolean);
+        return `${s.slot}：${v.name}` + (notes.length ? ' · ' + notes.join('，') : '');
+      }
+    }).filter(Boolean);
+    return {
+      audience,
+      headline: isFriends ? '周末局安排上了，看看这个行程👇' : '他给你精心挑选了这个方案，专门考虑了这些👇',
+      plan_id: plan?.id || '',
+      focus_points: focus.length ? focus : ['方案已为你量身定制'],
+      quick_actions: isFriends
+        ? ['可以，就这么定 ✓', '换个地方', '我有建议']
+        : ['就这个！', '换个餐厅', '我有更好的想法'],
+    };
+  }
+
+  // 执行结果：根据实际 plan + extras 动态生成，share_text 包含真实场所名
+  if(url.includes('/api/execute')) {
+    let body = {};
+    try { body = JSON.parse(options?.body || '{}'); } catch(e) {}
+    const plan   = body.plan   || {};
+    const extras = body.extras || [];
+    const steps  = plan.steps  || [];
+    const partySize = plan.party_size || 2;
+
+    const items = steps.map(s => {
+      const v = s.venue || {};
+      const isMeal = s.slot === '正餐';
+      return {
+        action: isMeal ? '餐厅预约' : '活动预约',
+        target: v.name || '',
+        status: 'success',
+        detail: isMeal
+          ? `已为 ${partySize} 人预订${v.name}（${s.time_range}）`
+          : `${v.name} — 无需提前预约，可直接前往`,
+        fallback_note: null,
+      };
+    });
+    extras.forEach(x => {
+      const mealVenue = steps.find(s => s.slot === '正餐')?.venue?.name || '餐厅';
+      items.push({ action: x, target: mealVenue, status: 'success',
+        detail: `已下单「${x}」，约 60 分钟内送达${mealVenue}`, fallback_note: null });
+    });
+
+    const timeline = steps.map(s => `${s.time_range}  ${s.slot}：${s.venue?.name || ''}`);
+    const first = steps[0]?.venue?.name || '出发地';
+    const meal  = steps.find(s => s.slot === '正餐')?.venue?.name || '餐厅';
+    const hours = Math.round((plan.total_minutes || 180) / 60);
+    const summary = `搞定了！出发，先去${first}，之后到${meal}用餐（已预订），全程约 ${hours} 小时。`;
+    const shareText = [summary, '—— 行程明细 ——', ...timeline].join('\n');
+
+    return {
+      all_success: true,
+      items,
+      itinerary: { summary, timeline, share_text: shareText },
+    };
+  }
+
   if(url.includes('/api/chat')) return {reply:'建议步行或骑行，两个点都在望京附近，路上大约 8 到 12 分钟。'};
   return {};
 }
@@ -498,10 +571,12 @@ async function doPlan(text){
   S.plans         = data.plans;
   S.currentIntent = data.intent;
 
-  // 渲染右侧分析面板（桌面）
-  renderAnalysisPanel(data.intent);
+  // 渲染右侧分析面板（含推理步骤）
+  renderAnalysisPanel(data.intent, data.reasoning_steps);
+  // 方案对比图（多方案时显示）
+  if(data.plans.length > 1) renderPlanComparison(data.plans);
   // 聊天流里给个简短确认
-  msgBot(`好的！Leo 已识别关键信息（右侧面板可查看）。<br>以下是为「${sceneLabel(data.intent)}」量身定制的方案：`);
+  msgBot(`好的！Leo 已识别关键信息（右侧面板可查看推理过程）。<br>以下是为「${sceneLabel(data.intent)}」量身定制的方案：`);
   data.plans.forEach(p => renderPlan(p, p.id === data.recommended_plan_id));
 }
 
@@ -524,14 +599,25 @@ const consIcon = {
   low_cal_diet:'🥗', need_private_room:'🚪', group_activity:'🎯',
 };
 
-function renderAnalysisPanel(intent){
+function renderAnalysisPanel(intent, reasoningSteps){
   const inferred = (intent.constraints||[]).filter(c=>c.source==='inferred');
-  if(!inferred.length) return;
-
   acEmpty.hidden = true;
   acContent.hidden = false;
 
-  const rows = inferred.map(c=>`
+  // 出行信息
+  const members = intent.members||[];
+  const hasChild = members.some(m=>m.role==='child');
+  const child    = members.find(m=>m.role==='child');
+  const spouse   = members.find(m=>m.role==='spouse');
+  const infoRows = [
+    `<div class="con-row"><span class="con-key">👥 出行人数</span><span class="con-val">${intent.party_size} 人</span></div>`,
+    hasChild ? `<div class="con-row"><span class="con-key">🧒 儿童年龄</span><span class="con-val">${child?.age||5} 岁</span></div>` : '',
+    spouse?.note ? `<div class="con-row"><span class="con-key">💪 健康需求</span><span class="con-val">${esc(spouse.note)}</span></div>` : '',
+    `<div class="con-row"><span class="con-key">⏱ 目标时长</span><span class="con-val">约 ${intent.duration_hours} 小时</span></div>`,
+  ].filter(Boolean).join('');
+
+  // 约束推断行
+  const constraintRows = inferred.map(c=>`
     <div class="con-row">
       <div class="con-check">
         <svg viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5 3.5-4" stroke="#22c98a" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -540,28 +626,73 @@ function renderAnalysisPanel(intent){
       <span class="con-val">${esc(c.reason)}</span>
     </div>`).join('');
 
-  // 出行信息摘要
-  const members = intent.members||[];
-  const hasChild = members.some(m=>m.role==='child');
-  const child = members.find(m=>m.role==='child');
-  const spouse = members.find(m=>m.role==='spouse');
-
-  const infoRows = [
-    `<div class="con-row"><span class="con-key">👥 出行人数</span><span class="con-val">${intent.party_size} 人</span></div>`,
-    hasChild ? `<div class="con-row"><span class="con-key">🧒 儿童年龄</span><span class="con-val">${child?.age||5} 岁</span></div>` : '',
-    spouse?.note ? `<div class="con-row"><span class="con-key">💪 健康需求</span><span class="con-val">${esc(spouse.note)}</span></div>` : '',
-    `<div class="con-row"><span class="con-key">⏱ 目标时长</span><span class="con-val">约 ${intent.duration_hours} 小时</span></div>`,
-  ].filter(Boolean).join('');
+  // Leo 推理步骤卡（仅 AI 规划时有）
+  let reasoningHTML = '';
+  if(reasoningSteps?.length){
+    const steps = reasoningSteps.map((s,i)=>`
+      <div class="rc-step">
+        <div class="rc-num">${i+1}</div>
+        <div class="rc-text"><b>${esc(s.title)}</b>　${esc(s.detail)}</div>
+      </div>`).join('');
+    reasoningHTML = `
+      <div class="reasoning-card">
+        <div class="rc-title">
+          <span style="font-size:14px">⚡</span> Leo 推理过程
+        </div>
+        ${steps}
+      </div>`;
+  }
 
   acContent.innerHTML = `
     <div class="intent-card">
       <div class="ic-header"><div class="ic-dot"></div><div class="ic-title">出行信息</div></div>
       ${infoRows}
     </div>
-    <div class="intent-card">
+    ${constraintRows ? `<div class="intent-card">
       <div class="ic-header"><div class="ic-dot"></div><div class="ic-title">Leo 推断的关键需求</div></div>
-      ${rows}
+      ${constraintRows}
+    </div>` : ''}
+    ${reasoningHTML}`;
+}
+
+// ── 方案对比 SVG 条形图 ──
+function renderPlanComparison(plans){
+  if(plans.length < 2) return;
+  const [p1, p2] = plans;
+  const maxCost  = Math.max(p1.total_cost, p2.total_cost, 1);
+  const maxMins  = Math.max(p1.total_minutes, p2.total_minutes, 1);
+
+  function barPair(label, v1, v2, max, unit){
+    const w1 = Math.round(v1/max*100), w2 = Math.round(v2/max*100);
+    return `<div class="pc-row">
+      <span class="pc-label">${label}</span>
+      <div class="pc-bars">
+        <div class="pc-bar-wrap">
+          <div class="pc-bar p1" style="width:${w1}%"></div>
+          <span class="pc-val">${v1}${unit}</span>
+        </div>
+        <div class="pc-bar-wrap">
+          <div class="pc-bar p2" style="width:${w2}%"></div>
+          <span class="pc-val">${v2}${unit}</span>
+        </div>
+      </div>
     </div>`;
+  }
+
+  const html = `<div class="msg bot" style="max-width:100%;width:100%;gap:6px">
+    <div class="leo-av-msg">L</div>
+    <div class="plan-compare">
+      <div class="pc-title">方案对比</div>
+      ${barPair('💰 人均花费', p1.total_cost, p2.total_cost, maxCost, '元')}
+      ${barPair('⏱ 总时长', Math.round(p1.total_minutes/60*10)/10, Math.round(p2.total_minutes/60*10)/10, maxMins/60, 'h')}
+      <div class="pc-legend">
+        <span><span class="pc-dot" style="background:var(--green)"></span>${esc(p1.title)}</span>
+        <span><span class="pc-dot" style="background:var(--orange)"></span>${esc(p2.title)}</span>
+      </div>
+    </div>
+  </div>`;
+  chat.appendChild(node(html));
+  scrollDown();
 }
 
 // ===== 约束卡（聊天流移动端显示）=====
@@ -589,8 +720,11 @@ function renderIntent(intent){
 
 // ===== 方案卡 =====
 function renderPlan(plan, recommended){
-  const steps = plan.steps.map((s,i)=>`
-    <div class="step">
+  // 用可变对象包装 plan，让"换一个地方"可以原地修改步骤
+  const planRef = { ...plan, steps: plan.steps.map(s=>({...s, venue:{...s.venue}})) };
+
+  const stepsHtml = planRef.steps.map((s,i)=>`
+    <div class="step" id="step-${plan.id}-${i}">
       <div class="step-time">${esc(s.time_range.split('-')[0]||'')}</div>
       <div class="dot">${slotIcon(s.slot)}</div>
       <div class="sbody">
@@ -598,21 +732,24 @@ function renderPlan(plan, recommended){
         <div class="sname">${esc(s.venue.name)}</div>
         <div class="swhy">${esc(s.why)}</div>
         ${s.venue.address ? `<div class="saddr" onclick="openMapForVenue('${s.venue.id}')">📍 ${esc(s.venue.address)}</div>` : ''}
+        <button class="step-swap-btn" data-step="${i}">换个地方 ↻</button>
+        <div class="step-alt-panel" id="alt-${plan.id}-${i}" style="display:none"></div>
       </div>
     </div>`).join('');
-  const tags = plan.highlights.map(h=>`<span class="t">${esc(h)}</span>`).join('');
-  const aud  = S.scene==='friends'?'friends':'spouse';
+
+  const tags = planRef.highlights.map(h=>`<span class="t">${esc(h)}</span>`).join('');
+  const aud      = S.scene==='friends'?'friends':'spouse';
   const audLabel = S.scene==='friends'?'朋友':'老婆';
 
   const n = node(`<div class="msg bot" style="max-width:100%;width:100%;gap:6px">
     <div class="leo-av-msg">L</div>
     <div class="plan-card ${recommended?'recommended':''}">
       <div class="plan-head">
-        <span class="pt">${esc(plan.title)}</span>
+        <span class="pt">${esc(planRef.title)}</span>
         ${recommended?'<span class="badge">推荐</span>':''}
       </div>
-      <div class="plan-meta">约 ${Math.round(plan.total_minutes/60)} 小时 · 预估总花费 ¥${plan.total_cost}</div>
-      <div class="plan-steps">${steps}</div>
+      <div class="plan-meta">约 ${Math.round(planRef.total_minutes/60)} 小时 · 预估总花费 ¥${planRef.total_cost}</div>
+      <div class="plan-steps">${stepsHtml}</div>
       <div class="plan-tags">${tags}</div>
       <div class="relay-trigger">
         <button class="rt">📲 递给${audLabel}一起看</button>
@@ -623,12 +760,88 @@ function renderPlan(plan, recommended){
       </div>
     </div></div>`);
 
-  n.querySelector('.rt').onclick    = () => openRelay(plan, aud);
-  n.querySelector('.js-map').onclick = () => loadPlanToMap(plan);
-  n.querySelector('.js-choose').onclick = () => choosePlan(plan);
+  n.querySelector('.rt').onclick     = () => openRelay(planRef, aud);
+  n.querySelector('.js-map').onclick  = () => loadPlanToMap(planRef);
+  n.querySelector('.js-choose').onclick = () => choosePlan(planRef);
+
+  // 换一个地方
+  n.querySelectorAll('.step-swap-btn').forEach(btn => {
+    btn.onclick = () => triggerStepReplace(planRef, +btn.dataset.step, btn);
+  });
+
   chat.appendChild(n); scrollDown();
 }
 function slotIcon(slot){ return ({'活动':'🎯','正餐':'🍽','附加活动':'✨'})[slot]||'📍'; }
+
+// ── "换一个地方"：Leo 生成同类备选 ──
+async function triggerStepReplace(planRef, stepIdx, btn){
+  const step = planRef.steps[stepIdx];
+  const altPanel = document.getElementById(`alt-${planRef.id}-${stepIdx}`);
+  if(!altPanel) return;
+
+  if(altPanel.style.display !== 'none'){
+    altPanel.style.display = 'none';
+    btn.textContent = '换个地方 ↻';
+    return;
+  }
+
+  btn.textContent = 'Leo 正在找替换…';
+  altPanel.style.display = 'block';
+  altPanel.innerHTML = '<div class="step-alt-title">⏳ 正在搜索同类场所…</div>';
+
+  try {
+    const prompt = `用户想替换行程中的"${step.slot}：${step.venue.name}"，帮我推荐 2-3 个北京望京商圈附近的同类${step.slot === '正餐' ? '餐厅' : '活动/场所'}。
+只返回 JSON 数组（不要 markdown），格式：
+[{"name":"场所名","address":"地址","why":"推荐理由（结合原方案约束：${planRef.highlights?.join('、')||''}）","lat":40.001,"lng":116.470}]`;
+
+    const reply = await callDeepSeek(
+      '你是本地生活规划 AI Leo，只返回纯 JSON 数组，不要 markdown 代码块。',
+      prompt
+    );
+    let alts = [];
+    try {
+      const m = reply.match(/\[[\s\S]*\]/);
+      alts = JSON.parse(m ? m[0] : reply);
+    } catch(e) { alts = []; }
+
+    if(!alts.length){ altPanel.innerHTML='<div class="step-alt-title" style="color:var(--text-3)">暂无推荐，请换个描述再试</div>'; btn.textContent='换个地方 ↻'; return; }
+
+    altPanel.innerHTML = `<div class="step-alt-title">Leo 推荐的替换选项：</div>` +
+      alts.map((a,i)=>`
+        <div class="step-alt-opt">
+          <div style="flex:1">
+            <div class="alt-name">${esc(a.name)}</div>
+            <div class="alt-why">${esc(a.why)}</div>
+          </div>
+          <button class="alt-btn" data-i="${i}">换这个</button>
+        </div>`).join('');
+
+    altPanel.querySelectorAll('.alt-btn').forEach(b => {
+      b.onclick = () => {
+        const alt = alts[+b.dataset.i];
+        // 原地更新 step
+        planRef.steps[stepIdx].venue.name    = alt.name;
+        planRef.steps[stepIdx].venue.address = alt.address || '';
+        planRef.steps[stepIdx].venue.lat     = alt.lat || planRef.steps[stepIdx].venue.lat;
+        planRef.steps[stepIdx].venue.lng     = alt.lng || planRef.steps[stepIdx].venue.lng;
+        planRef.steps[stepIdx].why           = alt.why || '';
+        // 更新 DOM
+        const sbody = document.getElementById(`step-${planRef.id}-${stepIdx}`)?.querySelector('.sbody');
+        if(sbody){
+          sbody.querySelector('.sname').textContent = alt.name;
+          sbody.querySelector('.swhy').textContent  = alt.why || '';
+        }
+        altPanel.style.display = 'none';
+        btn.textContent = '换个地方 ↻';
+        msgBot(`已替换为「${esc(alt.name)}」✓`);
+        scrollDown();
+      };
+    });
+  } catch(e){
+    altPanel.innerHTML = `<div class="step-alt-title" style="color:var(--red)">搜索失败：${esc(e.message)}</div>`;
+  }
+  btn.textContent = '换个地方 ↻';
+}
 
 // ===== 地图页入口 =====
 function loadPlanToMap(plan){
@@ -1064,35 +1277,58 @@ async function doExecute(plan){
 }
 
 function renderExecResult(res, plan){
-  const items = res.items.map(it=>{
-    const icon = it.status==='success'?'✅':it.status==='fallback'?'🔄':'⚠️';
-    const note = it.fallback_note?`<div class="enote">↳ ${esc(it.fallback_note)}</div>`:'';
-    return `<div class="exec-item ${it.status==='failed'?'failed':''}">
-      <span class="ei">${icon}</span>
-      <div class="ed"><b>${esc(it.action)}</b>　${esc(it.detail)}${note}</div>
-    </div>`;
-  }).join('');
+  // 情感化结尾文案：根据 extras 和场景定制
+  const extras = S.extras || [];
+  let emotionalNote = '';
+  if(extras.includes('蛋糕') && extras.includes('鲜花')){
+    emotionalNote = '蛋糕和鲜花已悄悄预订，等着给 TA 一个双重惊喜 🎂💐';
+  } else if(extras.includes('蛋糕')){
+    const mealName = plan.steps?.find(s=>s.slot==='正餐')?.venue?.name || '餐厅';
+    emotionalNote = `蛋糕已悄悄送往${mealName}，等着给 TA 一个惊喜 🎂`;
+  } else if(extras.includes('鲜花')){
+    emotionalNote = '鲜花已在路上，让这个下午多一点美好 💐';
+  } else if(res.all_success){
+    const scenes = {'family':'全家出行，好好享受这个下午 🌿','friends':'朋友局出发，今天一定很好玩 🎉'};
+    emotionalNote = scenes[S.scene] || '出发吧，好时光等着你 ✨';
+  }
 
-  const n = node(`<div class="msg bot" style="max-width:100%;width:100%;gap:6px">
+  const card = node(`<div class="msg bot" style="max-width:100%;width:100%;gap:6px">
     <div class="leo-av-msg">L</div>
     <div class="exec-card">
       <div class="eh">${res.all_success?'🎉 全部搞定！':'已尽力安排，部分需确认'}</div>
-      ${items}
+      <div class="exec-items-wrap"></div>
+      ${emotionalNote ? `<div class="exec-emotional">${esc(emotionalNote)}</div>` : ''}
       <div class="share-box">${esc(res.itinerary.share_text)}</div>
       <button class="share-btn js-share">📤 复制行程，转发给家人 / 朋友</button>
       <button class="ask-btn js-ask">💬 问 Leo：路线怎么走 / 有什么建议</button>
     </div></div>`);
 
-  n.querySelector('.js-share').onclick=()=>{
+  card.querySelector('.js-share').onclick=()=>{
     navigator.clipboard?.writeText(res.itinerary.share_text);
     msgBot('✅ 行程文案已复制，去粘贴给家人吧！');
     saveHistory(plan, res.itinerary.summary);
   };
-  n.querySelector('.js-ask').onclick=()=>openAsk();
-  chat.appendChild(n); scrollDown();
+  card.querySelector('.js-ask').onclick=()=>openAsk();
+  chat.appendChild(card); scrollDown();
+
+  // stagger 逐条动画：每隔 120ms 滑入一项
+  const wrap = card.querySelector('.exec-items-wrap');
+  res.items.forEach((it, idx) => {
+    setTimeout(() => {
+      const icon = it.status==='success'?'✅':it.status==='fallback'?'🔄':'⚠️';
+      const note = it.fallback_note ? `<div class="enote">↳ ${esc(it.fallback_note)}</div>` : '';
+      const el = node(`<div class="exec-item exec-stagger ${it.status==='failed'?'failed':''}">
+        <span class="ei">${icon}</span>
+        <div class="ed"><b>${esc(it.action)}</b>　${esc(it.detail)}${note}</div>
+      </div>`);
+      wrap.appendChild(el);
+      scrollDown();
+    }, idx * 120);
+  });
 
   S.currentPlan = plan;
-  setTimeout(()=>msgBot('路线已就绪 🗺️　切换到「路线地图」页可查看全程和步行距离。'),700);
+  const delay = res.items.length * 120 + 400;
+  setTimeout(()=>msgBot('路线已就绪 🗺️　切换到「路线地图」页可查看全程和步行距离。'), delay);
 }
 
 // ===== 追问 Leo =====
@@ -1134,5 +1370,64 @@ sendBtn.onclick=submit;
 inputEl.onkeydown=e=>{ if(e.key==='Enter') submit(); };
 document.querySelectorAll('.chip').forEach(c=>{ c.onclick=()=>doPlan(c.dataset.text); });
 
-// ===== Initialize AMap =====
+// ===== 天气感知：更新欢迎气泡 + 注入规划上下文 =====
+let S_weather = '';   // 全局天气摘要（注入 DeepSeek prompt）
+
+async function fetchWeather(){
+  const key = CFG().AMAP_REST_KEY;
+  if(!key) return;
+  try {
+    const ctrl = new AbortController();
+    setTimeout(()=>ctrl.abort(), 4000);
+    const r = await fetch(
+      `https://restapi.amap.com/v3/weather/weatherInfo?key=${key}&city=${encodeURIComponent(CFG().USER_CITY||'北京')}&output=json`,
+      { signal: ctrl.signal }
+    );
+    const d = await r.json();
+    const lives = d?.lives?.[0];
+    if(!lives) return;
+    const { weather, temperature, winddirection, windpower } = lives;
+    S_weather = `今天${weather}，气温${temperature}℃，${winddirection}风${windpower}级`;
+
+    // 更新欢迎气泡，加入天气标签
+    const firstBubble = chat.querySelector('.msg.bot .bubble');
+    if(firstBubble && !firstBubble.querySelector('.weather-tag')){
+      const tag = document.createElement('span');
+      tag.className = 'weather-tag';
+      const icon = weather.includes('雨') ? '🌧️' : weather.includes('云') || weather.includes('阴') ? '⛅' : '☀️';
+      tag.textContent = `${icon} ${weather} ${temperature}℃`;
+      firstBubble.appendChild(tag);
+
+      // 雨天提示
+      if(weather.includes('雨')){
+        setTimeout(()=>msgBot(`今天${weather}，Leo 会优先推荐室内活动，出门记得带伞 ☂️`), 600);
+      }
+    }
+  } catch(e){ /* 天气获取失败，静默忽略 */ }
+}
+
+// 把天气注入 aiPlanFromText 的 userText 上下文
+const _origAiPlan = aiPlanFromText;
+window.aiPlanFromText = async function(userText){
+  const textWithWeather = S_weather ? `${userText}（当前天气：${S_weather}）` : userText;
+  return _origAiPlan(textWithWeather);
+};
+
+// ===== P2：历史行程"重新规划"升级 =====
+window.histRerun = (id) => {
+  const h = JSON.parse(localStorage.getItem(HIST_KEY)||'[]').find(x=>x.id===id);
+  if(!h) return;
+  switchPage('chat');
+  // 延迟一帧让页面切换完成，然后把旧方案描述填入输入框触发重新规划
+  setTimeout(()=>{
+    const desc = `${h.title}（${h.steps.join('、')}）— 帮我重新规划一个类似的下午`;
+    inputEl.value = desc;
+    inputEl.focus();
+    // 同时自动触发，模拟用户发送
+    doPlan(desc);
+  }, 150);
+};
+
+// ===== 初始化 =====
 initMapPage();
+fetchWeather();
