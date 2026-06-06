@@ -732,6 +732,7 @@ body {
 .ms-name  { font-size: 14px; font-weight: 600; color: var(--text); }
 .ms-addr  { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .ms-dist  { font-size: 12px; color: var(--orange); margin-top: 4px; font-weight: 600; }
+.ms-transit { display: block; color: var(--text-2); font-weight: 500; margin-top: 3px; line-height: 1.55; }
 
 .map-empty {
   flex: 1;

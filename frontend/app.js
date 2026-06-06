@@ -39,7 +39,11 @@ const S = {
   mapInstance: null,
   mapLayers: [],
   planSummary: '',
+  routeCache: new Map(),
 };
+
+const ROUTE_CACHE_TTL_MS = 30 * 60 * 1000;
+window.addEventListener('beforeunload', () => S.routeCache.clear());
 
 // ===== DOM 引用 =====
 const $ = id => document.getElementById(id);
@@ -1113,6 +1117,24 @@ function formatDistance(meters){
 function formatMinutes(seconds){
   return Math.max(1, Math.ceil(Number(seconds || 0) / 60));
 }
+function routeCacheKey(points){
+  const city = S_location.city || DEFAULT_LOCATION.city;
+  const coords = points.map(p => `${Number(p.lng).toFixed(6)},${Number(p.lat).toFixed(6)}`).join('|');
+  return `${city}:${coords}`;
+}
+function getCachedRoute(points){
+  const key = routeCacheKey(points);
+  const cached = S.routeCache.get(key);
+  if(!cached) return null;
+  if(Date.now() - cached.createdAt > ROUTE_CACHE_TTL_MS){
+    S.routeCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+function setCachedRoute(points, data){
+  S.routeCache.set(routeCacheKey(points), {createdAt:Date.now(), data});
+}
 function formatRouteSummary(route){
   const parts = [
     `${formatDistance(Number(route.distance || 0))} 步行约${formatMinutes(route.duration)}分钟`,
@@ -1121,13 +1143,26 @@ function formatRouteSummary(route){
   if(route.transit_duration) parts.push(`公共交通约${formatMinutes(route.transit_duration)}分钟`);
   return parts.join('，');
 }
+function formatTransitDetails(segments = []){
+  const rides = segments.filter(s => s.type === 'bus' || s.type === 'metro');
+  if(!rides.length) return '';
+  return rides.map(s => {
+    const stops = s.departure_stop && s.arrival_stop ? `：${esc(s.departure_stop)} → ${esc(s.arrival_stop)}` : '';
+    const via = s.via_num ? `，${s.via_num}站` : '';
+    return `${esc(s.name || '公共交通')}${stops}${via}`;
+  }).join('；');
+}
+function formatRouteDetail(route){
+  const detail = formatTransitDetails(route.transit_segments);
+  return detail ? `${formatRouteSummary(route)}<br><span class="ms-transit">公交/地铁：${detail}</span>` : formatRouteSummary(route);
+}
 async function renderAmapWalkingRoute(points){
   const backendRoute = await fetchBackendWalkingRoute(points);
   if(backendRoute?.ok){
     renderBackendRoutePolyline(backendRoute);
     backendRoute.legs.forEach((leg, i)=>{
       const distNode = $(`route-leg-${i}`)?.querySelector('.ms-dist');
-      if(distNode) distNode.textContent = formatRouteSummary(leg);
+      if(distNode) distNode.innerHTML = formatRouteDetail(leg);
     });
     return {
       distance: Number(backendRoute.distance || 0),
@@ -1165,11 +1200,15 @@ async function renderAmapWalkingRoute(points){
 
 async function fetchBackendWalkingRoute(points){
   try {
-    return await apiJson('/api/amap/walking', {
+    const cached = getCachedRoute(points);
+    if(cached) return cached;
+    const route = await apiJson('/api/amap/walking', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({points, city:S_location.city || DEFAULT_LOCATION.city}),
     });
+    if(route?.ok) setCachedRoute(points, route);
+    return route;
   } catch(e) {
     return null;
   }

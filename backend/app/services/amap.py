@@ -136,7 +136,7 @@ async def bicycling(origin: dict[str, float], destination: dict[str, float]) -> 
 
 
 async def transit(origin: dict[str, float], destination: dict[str, float], city: str = "北京") -> dict[str, Any] | None:
-    """Find the shortest public transit duration. Includes bus and metro schemes."""
+    """Find the shortest public transit scheme. Includes bus and metro details."""
     key = _require_key()
     params = {
         "key": key,
@@ -159,17 +159,69 @@ async def transit(origin: dict[str, float], destination: dict[str, float], city:
         return None
 
     transits = data.get("route", {}).get("transits", [])
-    durations: list[int] = []
+    best: dict[str, Any] | None = None
+    best_duration = 0
     for item in transits:
         try:
             duration = int(float(item.get("duration") or 0))
         except (TypeError, ValueError):
             duration = 0
-        if duration > 0:
-            durations.append(duration)
-    if not durations:
+        if duration <= 0:
+            continue
+        if best is None or duration < best_duration:
+            best = item
+            best_duration = duration
+    if best is None:
         return None
-    return {"duration": min(durations)}
+    return {
+        "duration": best_duration,
+        "segments": _parse_transit_segments(best),
+    }
+
+
+def _parse_transit_segments(transit_scheme: dict[str, Any]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for segment in transit_scheme.get("segments") or []:
+        walking = segment.get("walking") or {}
+        try:
+            walk_distance = int(float(walking.get("distance") or 0))
+        except (TypeError, ValueError):
+            walk_distance = 0
+        if walk_distance > 0:
+            try:
+                walk_duration = int(float(walking.get("duration") or 0))
+            except (TypeError, ValueError):
+                walk_duration = 0
+            segments.append({
+                "type": "walking",
+                "distance": walk_distance,
+                "duration": walk_duration,
+                "instruction": "步行",
+            })
+
+        bus = segment.get("bus") or {}
+        for line in bus.get("buslines") or []:
+            departure = line.get("departure_stop") or {}
+            arrival = line.get("arrival_stop") or {}
+            try:
+                duration = int(float(line.get("duration") or 0))
+            except (TypeError, ValueError):
+                duration = 0
+            try:
+                via_num = int(float(line.get("via_num") or 0))
+            except (TypeError, ValueError):
+                via_num = 0
+            name = line.get("name") or "公共交通"
+            vehicle_type = "metro" if ("地铁" in name or "轨道" in name) else "bus"
+            segments.append({
+                "type": vehicle_type,
+                "name": name,
+                "departure_stop": departure.get("name") or "",
+                "arrival_stop": arrival.get("name") or "",
+                "via_num": via_num,
+                "duration": duration,
+            })
+    return segments
 
 
 async def place_text_search(

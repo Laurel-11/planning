@@ -26,7 +26,7 @@ export async function onRequestPost({ request, env }) {
     const legDuration = Number.parseInt(path.duration, 10) || 0;
     const polyline = (path.steps || []).flatMap((step) => parsePolyline(step.polyline));
     const bikeDuration = await fetchBicyclingDuration(env, start, end);
-    const transitDuration = await fetchTransitDuration(env, start, end, city);
+    const transit = await fetchTransit(env, start, end, city);
     distance += legDistance;
     duration += legDuration;
     const leg = {
@@ -37,7 +37,10 @@ export async function onRequestPost({ request, env }) {
       polyline,
     };
     if (bikeDuration) leg.bicycling_duration = bikeDuration;
-    if (transitDuration) leg.transit_duration = transitDuration;
+    if (transit) {
+      leg.transit_duration = transit.duration;
+      leg.transit_segments = transit.segments;
+    }
     legs.push(leg);
   }
 
@@ -60,7 +63,7 @@ async function fetchBicyclingDuration(env, start, end) {
   return Number.parseInt(path?.duration, 10) || null;
 }
 
-async function fetchTransitDuration(env, start, end, city) {
+async function fetchTransit(env, start, end, city) {
   const { response, data } = await amapFetch(env, "/v3/direction/transit/integrated", {
     origin: `${start.lng},${start.lat}`,
     destination: `${end.lng},${end.lat}`,
@@ -70,8 +73,44 @@ async function fetchTransitDuration(env, start, end, city) {
     extensions: "base",
   });
   if (response) return null;
-  const durations = (data.route?.transits || [])
-    .map((item) => Number.parseInt(item.duration, 10) || 0)
-    .filter((duration) => duration > 0);
-  return durations.length ? Math.min(...durations) : null;
+  const schemes = (data.route?.transits || [])
+    .map((item) => ({ item, duration: Number.parseInt(item.duration, 10) || 0 }))
+    .filter((entry) => entry.duration > 0)
+    .sort((a, b) => a.duration - b.duration);
+  if (!schemes.length) return null;
+  const best = schemes[0];
+  return {
+    duration: best.duration,
+    segments: parseTransitSegments(best.item),
+  };
+}
+
+function parseTransitSegments(scheme) {
+  const segments = [];
+  for (const segment of scheme.segments || []) {
+    const walking = segment.walking || {};
+    const walkDistance = Number.parseInt(walking.distance, 10) || 0;
+    if (walkDistance > 0) {
+      segments.push({
+        type: "walking",
+        distance: walkDistance,
+        duration: Number.parseInt(walking.duration, 10) || 0,
+        instruction: "步行",
+      });
+    }
+
+    const bus = segment.bus || {};
+    for (const line of bus.buslines || []) {
+      const name = line.name || "公共交通";
+      segments.push({
+        type: name.includes("地铁") || name.includes("轨道") ? "metro" : "bus",
+        name,
+        departure_stop: line.departure_stop?.name || "",
+        arrival_stop: line.arrival_stop?.name || "",
+        via_num: Number.parseInt(line.via_num, 10) || 0,
+        duration: Number.parseInt(line.duration, 10) || 0,
+      });
+    }
+  }
+  return segments;
 }

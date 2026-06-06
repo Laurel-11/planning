@@ -185,6 +185,7 @@ async def api_amap_walking(body: WalkingBody):
                 leg["bicycling_duration"] = bike["duration"]
             if transit:
                 leg["transit_duration"] = transit["duration"]
+                leg["transit_segments"] = transit.get("segments", [])
             legs.append({
                 "origin": start_point,
                 "destination": end_point,
