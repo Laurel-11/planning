@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>闲时达 · Leisure Done</title>
   <link rel="stylesheet" href="styles.css">
+  <!-- Leaflet（高德加载失败时的备用地图，离线也能用） -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- config.js 必须最先加载，高德安全码要在地图 SDK 加载前注入 -->
   <script src="config.js"></script>
   <script>
-    // 注入高德安全密钥（必须在 AMap SDK 加载前执行）
     (function(){
       var cfg = window.APP_CONFIG || {};
       if(cfg.AMAP_SECURITY_JS_CODE){

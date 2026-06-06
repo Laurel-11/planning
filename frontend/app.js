@@ -2,6 +2,32 @@
 // 四页 SPA：对话规划 / 路线地图 / 灵感发现 / 历史行程
 // -------------------------------------------------------
 
+// ── file:// 协议检测：DeepSeek 和高德地图必须在 HTTP 下运行 ──
+(function(){
+  if(window.location.protocol !== 'file:') return;
+  // 在欢迎气泡下方插入引导横幅
+  document.addEventListener('DOMContentLoaded', function(){
+    const chat = document.getElementById('chat');
+    if(!chat) return;
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+      margin:8px 0; padding:14px 16px; background:#fff8e6; border:1.5px solid #ffc533;
+      border-radius:12px; font-size:13px; line-height:1.7; color:#7a5800;
+    `;
+    banner.innerHTML = `
+      <b>⚠️ 请用本地服务器打开，直接双击 HTML 无法调用 AI 和地图</b><br>
+      <span style="color:#555">浏览器安全策略（CORS）会拦截 file:// 的网络请求。</span><br>
+      <b>解决方法：</b>在项目根目录运行<br>
+      <code style="background:#f2f2f2;padding:2px 8px;border-radius:4px;font-size:12px">python serve.py</code><br>
+      然后浏览器访问 <code style="background:#f2f2f2;padding:2px 8px;border-radius:4px">http://localhost:8080</code>
+    `;
+    // 插在第一条 bot 消息后
+    const firstMsg = chat.querySelector('.msg.bot');
+    if(firstMsg && firstMsg.nextSibling) chat.insertBefore(banner, firstMsg.nextSibling);
+    else chat.appendChild(banner);
+  });
+})();
+
 // ===== 全局状态 =====
 const S = {
   sessionId: null,
@@ -87,7 +113,13 @@ async function amapPoiSearch(keywords, types = '', city = '北京'){
 // ── DeepSeek 直接调用 ──
 async function callDeepSeek(systemPrompt, userContent, jsonMode = false){
   const key = CFG().DEEPSEEK_API_KEY;
-  if(!key) throw new Error('未配置 DEEPSEEK_API_KEY');
+  if(!key) throw new Error('MISSING_KEY');
+
+  // file:// 协议下 fetch 会被浏览器 CORS 拦截，提前拦截给友好提示
+  if(window.location.protocol === 'file:'){
+    throw new Error('FILE_PROTOCOL');
+  }
+
   const body = {
     model: CFG().DEEPSEEK_MODEL || 'deepseek-chat',
     max_tokens: 2048,
@@ -97,12 +129,17 @@ async function callDeepSeek(systemPrompt, userContent, jsonMode = false){
     ],
   };
   if(jsonMode) body.response_format = { type: 'json_object' };
-  const r = await fetch('https://api.deepseek.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if(!r.ok) throw new Error(`DeepSeek error ${r.status}: ${await r.text()}`);
+  let r;
+  try {
+    r = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch(e) {
+    throw new Error('NETWORK_ERROR');
+  }
+  if(!r.ok) throw new Error(`API_ERROR_${r.status}`);
   const d = await r.json();
   return d.choices[0].message.content;
 }
@@ -273,17 +310,6 @@ function ensureAmapReady(){
   return amapReadyPromise;
 }
 
-function renderMapUnavailable(){
-  const mapEl = $('map');
-  mapEl.innerHTML = `
-    <div class="map-empty amap-missing">
-      <div class="map-empty-icon">🗺️</div>
-      <div>需要配置高德 AMAP_JS_API_KEY</div>
-    </div>`;
-  mapTitle.textContent = '高德地图';
-  mapMeta.textContent = '等待配置高德 Web JS API Key';
-}
-
 function clearAmap(){
   if(!S.mapInstance) return;
   S.mapInstance.clearMap();
@@ -448,7 +474,23 @@ async function doPlan(text){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({text}),
     });
-  } catch(e){ hideThink(); msgBot('网络出错了，请重试。'); return; }
+  } catch(e){
+    hideThink();
+    const msg = e?.message || '';
+    if(msg === 'FILE_PROTOCOL'){
+      msgBot(`需要用本地服务器访问才能调用 AI。<br><br>
+请在项目根目录运行：<br>
+<code style="background:#f2f3f5;padding:2px 8px;border-radius:4px;font-size:12px">python serve.py</code><br>
+然后访问 <code style="background:#f2f3f5;padding:2px 8px;border-radius:4px">http://localhost:8080</code>`);
+    } else if(msg === 'NETWORK_ERROR'){
+      msgBot('网络请求失败，请检查网络连接，或确认正在通过 <code>http://localhost:8080</code> 访问。');
+    } else if(msg === 'MISSING_KEY'){
+      msgBot('未检测到 DeepSeek API Key，请检查 config.js 配置。');
+    } else {
+      msgBot(`Leo 遇到了问题：${esc(msg) || '未知错误'}，请稍后重试。`);
+    }
+    return;
+  }
   hideThink();
 
   S.sessionId     = data.session_id;
@@ -604,81 +646,168 @@ function openMapForVenue(venueId){
 }
 window.openMapForVenue = openMapForVenue;
 
-// ===== AMap page =====
+// ===== 地图页：高德优先，失败时自动切 Leaflet =====
 async function initMapPage(){
-  try {
-    await ensureAmapReady();
-  } catch(e) {
-    renderMapUnavailable();
-    return;
+  const amapOk = await ensureAmapReady().then(()=>true).catch(()=>false);
+  if(amapOk){
+    await initMapWithAmap();
+  } else {
+    initMapWithLeaflet();
   }
+}
 
-  if(!S.mapInstance){
-    S.mapInstance = new AMap.Map('map', {
-      zoom: 14,
-      center: [116.4700, 40.0000],
-      viewMode: '2D',
-    });
+// ── 高德地图实现 ──
+async function initMapWithAmap(){
+  if(!S.mapInstance || S.mapInstance._type !== 'amap'){
+    // 清除可能存在的 Leaflet 实例
+    if(S.mapInstance && S.mapInstance._type === 'leaflet'){
+      S.mapInstance.remove();
+      S.mapInstance = null;
+      $('map').innerHTML = '';
+    }
+    S.mapInstance = new AMap.Map('map', { zoom:14, center:[116.4700,40.0000], viewMode:'2D' });
+    S.mapInstance._type = 'amap';
   }
   clearAmap();
 
   const plan = S.currentPlan;
   if(!plan || !plan.steps.length){
     mapTitle.textContent='路线地图';
-    mapMeta.textContent='选好方案后查看路线';
-    mapSteps.innerHTML=`<div class="map-empty"><div class="map-empty-icon">🗺️</div><div>在规划页选择方案后<br>点击「看路线」即可显示全程</div></div>`;
-    await renderDiscoverMarkers();
+    mapMeta.textContent='选好方案后，在规划页点「看路线」';
+    mapSteps.innerHTML=`<div class="map-empty"><div class="map-empty-icon">🗺️</div><div>选好方案后<br>点击「看路线」即可显示全程</div></div>`;
+    try {
+      const d = await apiJson('/api/discover');
+      (d.spots||[]).forEach(s=>{
+        createAmapMarker(s,'<div class="amap-pin discover">•</div>',s.name);
+      });
+      S.mapInstance.setFitView();
+    } catch(e){}
+    return;
+  }
+
+  mapTitle.textContent = plan.title || '路线地图';
+  const home = {lat:40.0000,lng:116.4700,name:'望京'};
+  createAmapMarker(home,'<div class="amap-pin home">🏠</div>','出发点');
+
+  const routePoints = [home];
+  const stepCards = [];
+  plan.steps.forEach((step,i)=>{
+    const v = step.venue;
+    if(!v.lat||!v.lng) return;
+    createAmapMarker(v,`<div class="amap-pin">${i+1}</div>`,v.name);
+    routePoints.push(v);
+    stepCards.push(makeStepCard(step,v,i,'高德路线规划中…'));
+  });
+
+  mapMeta.textContent=`${plan.steps.length} 个站点 · 步行路线规划中`;
+  mapSteps.innerHTML = stepCards.join('') + askLeoBtn();
+
+  const stats = await renderAmapWalkingRoute(routePoints);
+  mapMeta.textContent = stats.distance > 0
+    ? `${plan.steps.length} 个站点 · 步行约 ${formatDistance(stats.distance)} · ${Math.ceil(stats.duration/60)} 分钟`
+    : `${plan.steps.length} 个站点`;
+  S.mapInstance.setFitView();
+}
+
+// ── Leaflet 备用地图实现 ──
+function initMapWithLeaflet(){
+  if(!window.L){ mapTitle.textContent='地图不可用'; return; }
+
+  if(S.mapInstance && S.mapInstance._type === 'amap'){
+    S.mapInstance.destroy?.();
+    S.mapInstance = null;
+    $('map').innerHTML = '';
+  }
+
+  if(!S.mapInstance || S.mapInstance._type !== 'leaflet'){
+    const lmap = L.map('map').setView([40.0000,116.4700],14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      attribution:'© OpenStreetMap', maxZoom:19
+    }).addTo(lmap);
+    lmap._type = 'leaflet';
+    S.mapInstance = lmap;
+    S.mapLayers  = [];
+  } else {
+    S.mapLayers.forEach(l=>{ try{ S.mapInstance.removeLayer(l); }catch(e){} });
+    S.mapLayers = [];
+  }
+
+  const lmap = S.mapInstance;
+  const plan  = S.currentPlan;
+
+  if(!plan || !plan.steps.length){
+    mapTitle.textContent = '路线地图';
+    mapMeta.textContent  = '选好方案后，在规划页点「看路线」';
+    mapSteps.innerHTML   = `<div class="map-empty"><div class="map-empty-icon">🗺️</div><div>选好方案后<br>点击「看路线」即可显示全程</div></div>`;
+    setTimeout(()=>lmap.invalidateSize(),80);
     return;
   }
 
   mapTitle.textContent = plan.title || '路线地图';
 
-  const home = {lat:40.0000, lng:116.4700, name:'望京'};
-  createAmapMarker(home, '<div class="amap-pin home">🏠</div>', '出发点');
+  // 出发点
+  const homeMarker = L.marker([40.0000,116.4700],{
+    icon: L.divIcon({html:'<div class="amap-pin home" style="background:#22c98a;color:#fff;border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font-size:14px;box-shadow:0 2px 8px rgba(34,201,138,.4)">🏠</div>',iconSize:[30,30],className:'',iconAnchor:[15,30]})
+  }).addTo(lmap);
+  S.mapLayers.push(homeMarker);
 
-  const routePoints = [home];
+  const points = [[40.0000,116.4700]];
   const stepCards = [];
 
   plan.steps.forEach((step,i)=>{
     const v = step.venue;
     if(!v.lat||!v.lng) return;
-    createAmapMarker(v, `<div class="amap-pin">${i+1}</div>`, v.name);
-    routePoints.push(v);
-    stepCards.push(`<div class="map-step-card" id="route-leg-${i}">
-      <div class="ms-num">${i+1}</div>
-      <div class="ms-body">
-        <div class="ms-name">${esc(step.slot)} · ${esc(v.name)}</div>
-        <div class="ms-addr">📍 ${esc(v.address||'')}</div>
-        <div class="ms-dist">高德路线规划中...</div>
-      </div>
-    </div>`);
+    const marker = L.marker([v.lat,v.lng],{
+      icon: L.divIcon({
+        html:`<div style="background:${i===0?'#22c98a':'#ff8c42'};color:#fff;border-radius:50%;width:30px;height:30px;display:grid;place-items:center;font-weight:700;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.25)">${i+1}</div>`,
+        iconSize:[30,30],className:'',iconAnchor:[15,30]
+      })
+    }).bindPopup(`<div class="map-popup"><strong>${esc(v.name)}</strong><br>${esc(step.slot)} · ${esc(step.time_range)}<br>📍 ${esc(v.address||'')}</div>`)
+      .addTo(lmap);
+    S.mapLayers.push(marker);
+    points.push([v.lat,v.lng]);
+
+    const prev = points[points.length-2];
+    const dist = calcDist(prev[0],prev[1],v.lat,v.lng);
+    const walkMin = Math.round(dist/80);
+    stepCards.push(makeStepCard(step,v,i,`🚶 步行约 ${dist<1000?dist+'m':(dist/1000).toFixed(1)+'km'}，约 ${walkMin} 分钟`));
   });
 
-  mapMeta.textContent=`${plan.steps.length} 个站点 · 高德步行路线规划中`;
-  mapSteps.innerHTML = stepCards.join('')+`
-    <div style="padding:6px 2px 2px">
-      <button class="btn btn-primary" style="width:100%" onclick="openAskFromMap()">💬 问 Leo 路线建议</button>
-    </div>`;
-
-  const routeStats = await renderAmapWalkingRoute(routePoints);
-  if(routeStats.distance > 0){
-    mapMeta.textContent = `${plan.steps.length} 个站点 · 高德步行约 ${formatDistance(routeStats.distance)} · ${Math.ceil(routeStats.duration/60)} 分钟`;
-  } else {
-    mapMeta.textContent=`${plan.steps.length} 个站点 · 高德路线规划失败，已显示站点`;
+  if(points.length>1){
+    const poly = L.polyline(points,{color:'#22c98a',weight:3,opacity:.85,dashArray:'8,5'}).addTo(lmap);
+    S.mapLayers.push(poly);
+    lmap.fitBounds(poly.getBounds(),{padding:[20,20]});
   }
-  S.mapInstance.setFitView();
+
+  mapMeta.textContent = `${plan.steps.length} 个站点 · OpenStreetMap`;
+  mapSteps.innerHTML  = stepCards.join('') + askLeoBtn();
+  setTimeout(()=>lmap.invalidateSize(),80);
 }
 
-async function renderDiscoverMarkers(){
-  try {
-    const data = await apiJson('/api/discover');
-    data.spots.forEach((s)=>{
-      createAmapMarker(s, '<div class="amap-pin discover">•</div>', s.name);
-    });
-    S.mapInstance.setFitView();
-  } catch(e) {}
+// ── 公共辅助 ──
+function makeStepCard(step, v, i, distText){
+  return `<div class="map-step-card" id="route-leg-${i}">
+    <div class="ms-num">${i+1}</div>
+    <div class="ms-body">
+      <div class="ms-name">${esc(step.slot)} · ${esc(v.name)}</div>
+      <div class="ms-addr">📍 ${esc(v.address||'')}</div>
+      <div class="ms-dist">${distText}</div>
+    </div>
+  </div>`;
 }
-
+function askLeoBtn(){
+  return `<div style="padding:6px 2px 2px">
+    <button class="btn btn-primary" style="width:100%" onclick="openAskFromMap()">💬 问 Leo 路线建议</button>
+  </div>`;
+}
+function calcDist(lat1,lng1,lat2,lng2){
+  const R=6371000,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
+}
+function formatDistance(meters){
+  return meters < 1000 ? `${Math.round(meters)}m` : `${(meters/1000).toFixed(1)}km`;
+}
 async function renderAmapWalkingRoute(points){
   const backendRoute = await fetchBackendWalkingRoute(points);
   if(backendRoute?.ok){
@@ -759,10 +888,6 @@ function searchAmapWalking(start, end){
       }
     });
   });
-}
-
-function formatDistance(meters){
-  return meters < 1000 ? `${Math.round(meters)}m` : `${(meters/1000).toFixed(1)}km`;
 }
 
 window.openAskFromMap = ()=>openAsk();
