@@ -88,7 +88,7 @@ window.APP_CONFIG = {
 - `agent/`：意图解析、规划、接力、执行。
 - `models/schemas.py`：Pydantic 数据模型。
 
-Cloudflare Pages Functions 下的 `functions/api/*` 保持与 FastAPI 路由兼容，用于静态站部署时保护服务端密钥。
+Cloudflare Pages Functions 下的 `functions/api/*` 用于静态站部署时保护服务端密钥。当前 functions 版本覆盖 `/config.js`、LLM 和高德相关接口；账号、会话和历史行程仍由 FastAPI + SQLite 实现。
 
 ## 账号与游客访问
 
@@ -111,4 +111,17 @@ POST /api/history
 
 注册用户头像采用账号首字母 + 注册时生成的纯色背景，颜色保存在 `users.avatar_color`。注册用户历史行程写入 `trips` 表；游客历史只保存在前端内存中，刷新或离开页面即销毁，不进入数据库。
 
-当前 SQLite 方案适合本地 `serve.py` 或独立 FastAPI 后端部署。若只使用 Cloudflare Pages Functions，需要接入 D1 或把 `API_BASE_URL` 指向独立后端。
+当前 SQLite 方案适合本地 `serve.py` 或独立 FastAPI 后端部署。本地数据库位于 `instance/leisure_done.sqlite3`，已被 `.gitignore` 忽略，不上传到 Cloudflare。
+
+若只使用 Cloudflare Pages Functions，需要把以下接口改写为 JavaScript Functions，并接入 Cloudflare D1：
+
+```txt
+POST /api/auth/register
+POST /api/auth/login
+GET  /api/auth/me
+POST /api/auth/logout
+GET  /api/history
+POST /api/history
+```
+
+D1 表结构应与 FastAPI SQLite schema 对齐：`users` 保存账号、密码哈希和头像颜色，`sessions` 保存登录 token，`trips` 保存注册用户历史行程。Functions 中建议使用 `DB` 作为 D1 binding 名称，并通过 `context.env.DB.prepare(sql).bind(...).run()` / `.first()` / `.all()` 查询。若不改写这些接口，则需要把 `API_BASE_URL` 指向独立后端。

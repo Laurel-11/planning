@@ -60,10 +60,13 @@ const inputEl     = $('input');
 const sendBtn     = $('send');
 const relayMask   = $('relayMask');
 const relayCard   = $('relayCard');
-const guideTrigger = $('guideTrigger');
+const guideTriggers = document.querySelectorAll('.guide-trigger');
 const guideMask   = $('guideMask');
 const guideClose  = $('guideClose');
 const guideContent = $('guideContent');
+const logoutConfirmMask = $('logoutConfirmMask');
+const logoutCancelBtn = $('logoutCancelBtn');
+const logoutConfirmBtn = $('logoutConfirmBtn');
 const authMask    = $('authMask');
 const authForm    = $('authForm');
 const authUsername = $('authUsername');
@@ -74,6 +77,8 @@ const guestBtn    = $('guestBtn');
 const logoutBtn   = $('logoutBtn');
 const accountStatus = $('accountStatus');
 const accountName = accountStatus?.querySelector('span:not(.leo-dot)');
+const accountAvatarBtn = $('accountAvatarBtn');
+const chatUserAvatar = $('chatUserAvatar');
 const askChat     = $('askChat');
 const askInput    = $('askInput');
 const askSend     = $('askSend');
@@ -95,9 +100,22 @@ function currentDayPart(){
   return new Date().getHours() < 12 ? '上午' : '下午';
 }
 
+function planningTimeLabel(){
+  const hour = new Date().getHours();
+  if(hour < 11) return '上午';
+  if(hour < 18) return '下午';
+  return '明天上午';
+}
+
 function renderWelcomeBubble(){
   if(!welcomeBubble) return;
   welcomeBubble.innerHTML = `你好！我是 <strong>Leo</strong>，你的出行规划助手。<br>说说你想怎么过这个${currentDayPart()}，我来帮你安排好一切 🌿`;
+}
+
+function syncViewportLayout(){
+  const isMobile = window.innerWidth < 768;
+  document.body.classList.toggle('is-mobile-layout', isMobile);
+  document.body.classList.toggle('is-desktop-layout', !isMobile);
 }
 
 const USER_GUIDE_MD = `# 闲时达 使用教程
@@ -731,6 +749,11 @@ function userAvatarHTML(extraClass = ''){
   return `<div class="user-avatar ${extraClass}">U</div>`;
 }
 
+function syncUserAvatarElement(container){
+  if(!container) return;
+  container.innerHTML = userAvatarHTML();
+}
+
 function leoAvatarHTML(extraClass = ''){
   return `<div class="leo-av-sm ${extraClass}">L</div>`;
 }
@@ -762,6 +785,8 @@ function updateAccountUI(){
   if(accountName){
     accountName.textContent = S.auth.user?.username || '游客访问';
   }
+  syncUserAvatarElement(accountAvatarBtn);
+  syncUserAvatarElement(chatUserAvatar);
   if(logoutBtn){
     logoutBtn.hidden = !S.auth.user;
   }
@@ -851,6 +876,7 @@ async function restoreAuth(){
 }
 
 async function logout(){
+  closeLogoutConfirm();
   if(S.auth.token){
     try { await authRequest('/api/auth/logout', { method: 'POST' }); } catch(e) {}
   }
@@ -863,24 +889,51 @@ async function logout(){
   if($('page-history')?.classList.contains('active')) renderHistoryPage();
 }
 
+function openLogoutConfirm(){
+  if(!S.auth.user){
+    showAuthGate();
+    return;
+  }
+  if(logoutConfirmMask) logoutConfirmMask.hidden = false;
+}
+
+function closeLogoutConfirm(){
+  if(logoutConfirmMask) logoutConfirmMask.hidden = true;
+}
+
+function handleAccountAvatarClick(event){
+  event?.stopPropagation();
+  if(S.auth.user) openLogoutConfirm();
+  else showAuthGate();
+}
+
 document.querySelectorAll('[data-auth-mode]').forEach(btn => {
   btn.onclick = () => setAuthMode(btn.dataset.authMode);
 });
-guideTrigger?.addEventListener('click', openGuide);
+guideTriggers.forEach(btn => btn.addEventListener('click', openGuide));
 guideClose?.addEventListener('click', closeGuide);
 guideMask?.addEventListener('click', event => {
   if(event.target === guideMask) closeGuide();
 });
 document.addEventListener('keydown', event => {
   if(event.key === 'Escape' && guideMask && !guideMask.hidden) closeGuide();
+  if(event.key === 'Escape' && logoutConfirmMask && !logoutConfirmMask.hidden) closeLogoutConfirm();
 });
 authForm?.addEventListener('submit', submitAuth);
 guestBtn?.addEventListener('click', continueAsGuest);
-logoutBtn?.addEventListener('click', logout);
+logoutBtn?.addEventListener('click', openLogoutConfirm);
 logoutBtn?.addEventListener('click', event => event.stopPropagation());
-accountStatus?.addEventListener('click', () => {
-  if(S.auth.user) return;
-  showAuthGate();
+accountAvatarBtn?.addEventListener('click', handleAccountAvatarClick);
+chatUserAvatar?.addEventListener('click', handleAccountAvatarClick);
+logoutCancelBtn?.addEventListener('click', closeLogoutConfirm);
+logoutConfirmBtn?.addEventListener('click', logout);
+logoutConfirmMask?.addEventListener('click', event => {
+  if(event.target === logoutConfirmMask) closeLogoutConfirm();
+});
+accountStatus?.addEventListener('click', event => {
+  if(event.target.closest('button')) return;
+  if(S.auth.user) openLogoutConfirm();
+  else showAuthGate();
 });
 
 // ===== 导航（侧边栏 + 底部 Tab 统一处理）=====
@@ -1688,7 +1741,10 @@ window.discoverSpotDetail = (s)=>{
 
 window.addDiscoverToChat = (name)=>{
   switchPage('chat');
-  setTimeout(()=>{ inputEl.value=`我想去${name}，帮我规划一下下午`; inputEl.focus(); },100);
+  setTimeout(()=>{
+    inputEl.value=`我想在${planningTimeLabel()}去${name}，帮我规划一下`;
+    inputEl.focus();
+  },100);
 };
 
 // ===== 历史页 =====
@@ -2108,7 +2164,7 @@ function updateLocationUI(){
     el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5z" fill="#22c98a"/></svg>${displayName}`;
   });
   document.querySelectorAll('.mob-loc').forEach(el => {
-    el.textContent = `📍 ${displayName}`;
+    el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5z" fill="#22c98a"/></svg>${displayName}`;
   });
   updateDiscoverHeader();
 }
@@ -2154,6 +2210,8 @@ window.histRerun = (id) => {
 };
 
 // ===== 初始化 =====
+syncViewportLayout();
+window.addEventListener('resize', syncViewportLayout);
 renderWelcomeBubble();
 restoreAuth();
 updateLocationUI();

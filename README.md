@@ -46,7 +46,14 @@ AMAP_SECURITY_JS_CODE=
 
 ## 部署思路
 
-前端默认调用同源 `/api/*`。如果部署平台支持 serverless/functions，可以实现同样路径；仓库中的 `functions/` 是 Cloudflare Pages Functions 版本。若部署到其它平台，也可以复用同样接口约定，或设置 `API_BASE_URL` 指向独立后端。
+前端默认调用同源 `/api/*`。如果部署平台支持 serverless/functions，可以实现同样路径；仓库中的 `functions/` 是 Cloudflare Pages Functions 版本。
+
+当前 Cloudflare Functions 已覆盖 `/config.js`、LLM 和高德地图相关接口；账号、会话和历史行程仍由 FastAPI + SQLite 实现。部署到 Cloudflare Pages 时有两种选择：
+
+1. 保留完整 Python 后端：把 FastAPI 部署到支持 Python 的平台，并在 Cloudflare 环境变量里设置 `API_BASE_URL=https://你的后端域名`。
+2. 全部放在 Cloudflare：把账号和历史行程接口改写为 Pages Functions，并使用 Cloudflare D1 作为 SQL 数据库。
+
+若部署到其它平台，也可以复用同样接口约定，或设置 `API_BASE_URL` 指向独立后端。
 
 ## 路线地图
 
@@ -149,7 +156,45 @@ POST /api/history
 
 注册用户会被分配一个首字母头像颜色，保存在 `users.avatar_color`。注册用户的历史行程保存在 `trips` 表中；游客访问不写数据库，游客历史只存在当前页面内存里，刷新或离开页面后清空，并会重新出现登录/注册弹窗。
 
-当前 SQLite 账号库适用于 `serve.py` 本地调试或部署一个持久运行的 Python/FastAPI 后端。如果只部署到 Cloudflare Pages Functions，需要改接 Cloudflare D1 或把 `API_BASE_URL` 指向独立后端，否则 Pages Functions 版本不会共享这份 SQLite 数据库。
+当前 SQLite 账号库适用于 `serve.py` 本地调试或部署一个持久运行的 Python/FastAPI 后端。本地数据库默认在 `instance/leisure_done.sqlite3`，该目录和 `*.sqlite3` 已被 `.gitignore` 忽略，不需要也不应该上传到 Cloudflare。
+
+如果只部署到 Cloudflare Pages Functions，需要把账号和历史接口改接 Cloudflare D1，或把 `API_BASE_URL` 指向独立后端，否则 Pages Functions 版本不会共享这份 SQLite 数据库。D1 方案的表结构可按当前 SQLite schema 建：
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,
+  password_salt TEXT NOT NULL,
+  avatar_color TEXT NOT NULL DEFAULT '#22c98a',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS trips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  steps_json TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_trips_user_id_created_at
+ON trips(user_id, created_at DESC);
+```
+
+在 Cloudflare Pages Functions 中把 D1 绑定命名为 `DB` 后，可通过 `context.env.DB.prepare(...).bind(...).run()` / `.first()` / `.all()` 访问 SQL。
 
 ## 主要接口
 

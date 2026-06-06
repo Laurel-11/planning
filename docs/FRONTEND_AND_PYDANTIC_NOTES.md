@@ -55,6 +55,8 @@ frontend/
 
 这使得本地 FastAPI、Cloudflare Pages Functions、Vercel/Netlify functions 或独立后端都能复用同一个前端。
 
+注意：当前 `functions/` 已实现 `/config.js`、LLM 和高德地图接口，但尚未实现账号、会话和历史行程接口。Cloudflare Pages 若要保留注册登录和历史行程，需要新增 D1-backed Functions；否则应把 `API_BASE_URL` 指向独立 FastAPI 后端。
+
 ## 路线缓存
 
 `frontend/app.js` 中维护页面内存缓存：
@@ -146,4 +148,15 @@ POST /api/history
 
 左上角 agent 头像会打开使用教程弹窗，弹窗内容与 `docs/USER_GUIDE.md` 保持一致。注册用户在 Leo 助手消息中显示账号首字母头像，背景色来自后端返回的 `avatar_color`；游客显示默认头像图片。注册用户历史行程走 `/api/history` 写入 SQLite，游客历史只存在页面内存中，刷新后清空并重新显示登录/注册入口。
 
-数据库路径由 `AUTH_DB_PATH` 控制，默认 `instance/leisure_done.sqlite3`。SQLite 和密码哈希使用 Python 标准库，因此 `requirements.txt` 不需要新增依赖。Cloudflare Pages Functions 部署若要保留账号功能，需要改接 D1 或独立后端 API。
+数据库路径由 `AUTH_DB_PATH` 控制，默认 `instance/leisure_done.sqlite3`。SQLite 和密码哈希使用 Python 标准库，因此 `requirements.txt` 不需要新增依赖。本地 SQLite 数据库和 `instance/` 目录已被 `.gitignore` 忽略，不需要上传。
+
+Cloudflare Pages Functions 部署若要保留账号功能，需要改接 D1 或独立后端 API。D1 Functions 中建议将数据库 binding 命名为 `DB`，然后使用：
+
+```js
+const user = await context.env.DB
+  .prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE")
+  .bind(username)
+  .first();
+```
+
+写入历史行程时使用 `run()`，读取列表时使用 `all()`。D1 表结构应与 `backend/auth.py` 中的 `users`、`sessions`、`trips` 保持一致。
