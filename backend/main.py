@@ -47,6 +47,12 @@ _SESSIONS: dict[str, object] = {}
 _FRONTEND_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "frontend")
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 
 # ============ 请求体 ============
 
@@ -372,15 +378,15 @@ if os.path.isdir(_FRONTEND_DIR):
 
     @app.get("/")
     async def index():
-        return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
+        return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"), headers=_NO_CACHE_HEADERS)
 
     @app.get("/styles.css")
     async def styles():
-        return FileResponse(os.path.join(_FRONTEND_DIR, "styles.css"))
+        return FileResponse(os.path.join(_FRONTEND_DIR, "styles.css"), headers=_NO_CACHE_HEADERS)
 
     @app.get("/app.js")
     async def script():
-        return FileResponse(os.path.join(_FRONTEND_DIR, "app.js"))
+        return FileResponse(os.path.join(_FRONTEND_DIR, "app.js"), headers=_NO_CACHE_HEADERS)
 
     @app.get("/config.js")
     async def frontend_config():
@@ -392,4 +398,5 @@ if os.path.isdir(_FRONTEND_DIR):
             f"AMAP_KEY: {settings.AMAP_JS_API_KEY!r}, "
             f"AMAP_SECURITY_JS_CODE: {settings.AMAP_SECURITY_JS_CODE!r} }};",
             media_type="application/javascript",
+            headers=_NO_CACHE_HEADERS,
         )
