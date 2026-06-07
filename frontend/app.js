@@ -39,6 +39,7 @@ const S = {
   mapInstance: null,
   mapLayers: [],
   planSummary: '',
+  planningMemory: null,
   routeCache: new Map(),
   history: [],
   auth: {
@@ -95,6 +96,68 @@ const welcomeBubble = $('welcomeBubble');
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function scrollDown(){ chat.scrollTop = chat.scrollHeight; }
 function node(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
+
+function uniqueList(items){
+  return [...new Set((items || []).filter(Boolean))];
+}
+
+function isPlanningFollowUp(text){
+  const value = String(text || '').trim();
+  if(!S.planningMemory || !value) return false;
+  const followUpPattern = /换(一个|一版|一套|个|地方)?|重新(来|规划|安排)|再(来|推荐|换)|不(喜欢|满意|合适)|别的|另一个|还有吗|还有别的吗|太远|太贵|便宜点|近一点|室内|户外|清淡点|低卡|不要/;
+  const explicitNewStart = /重新开始|新需求|换个城市|改成(北京|上海|广州|深圳|杭州|成都|南京|天津|重庆|西安)|我一个人|单人|带孩子|亲子|和孩子|和老婆|和老公|和朋友|总共\s*\d+\s*个?人/;
+  return followUpPattern.test(value) && (!explicitNewStart.test(value) || /换|不要|太远|太贵|近一点|便宜点/.test(value));
+}
+
+function planningMemorySummary(){
+  const mem = S.planningMemory;
+  if(!mem) return '';
+  const intent = mem.intent || {};
+  const members = (intent.members || []).map(m => {
+    if(m.role === 'child') return `孩子${m.age || 5}岁`;
+    if(m.role === 'spouse') return `配偶${m.note ? `(${m.note})` : ''}`;
+    return m.role;
+  }).join('、') || '无特殊成员';
+  const constraints = (intent.constraints || []).map(c => c.reason || c.key).filter(Boolean).slice(0, 5).join('；') || '无特殊约束';
+  const venues = uniqueList((mem.plans || []).flatMap(p => (p.steps || []).map(s => s.venue?.name))).slice(0, 8).join('、') || '暂无';
+  return [
+    `上一轮原始需求：${mem.userText || ''}`,
+    `固定场景：${intent.scene || mem.scene || 'unknown'}`,
+    `固定人数：${intent.party_size || mem.partySize || ''}人`,
+    `固定城市/位置：${mem.city || ''} ${intent.location || mem.location || ''}`,
+    `固定成员：${members}`,
+    `固定约束：${constraints}`,
+    `上一轮已推荐地点：${venues}`,
+  ].filter(Boolean).join('\n');
+}
+
+function buildMemoryAwarePlanningText(text){
+  if(!isPlanningFollowUp(text)) return text;
+  return [
+    '这是一次基于上一轮规划的修改请求。本轮用户明确修改的字段以本轮为准；其他字段必须保持上一轮的城市、位置、出行人数、同行成员、场景和约束不变。',
+    '不要把朋友局改成单人/双人/亲子，不要自行更换城市，不要丢失“别太远”等约束。',
+    '尽量避开上一轮已推荐地点，给出新的方案。',
+    '',
+    '【上一轮记忆】',
+    planningMemorySummary(),
+    '',
+    `【本轮用户补充】${text}`,
+  ].join('\n');
+}
+
+function updatePlanningMemory(userText, data){
+  if(!data?.intent || !Array.isArray(data?.plans)) return;
+  S.planningMemory = {
+    userText,
+    intent: data.intent,
+    plans: data.plans,
+    scene: data.intent.scene,
+    partySize: data.intent.party_size,
+    city: S_location.city || DEFAULT_LOCATION.city,
+    location: data.intent.location || getLocationPlanningName(),
+    updatedAt: Date.now(),
+  };
+}
 
 function currentDayPart(){
   return new Date().getHours() < 12 ? '上午' : '下午';
@@ -986,12 +1049,13 @@ async function doPlan(text){
   msgUser(text);
   $('examples')?.remove();
   showThink('Leo 正在理解你的需求，推断隐藏偏好…');
+  const planningText = buildMemoryAwarePlanningText(text);
 
   let data;
   try {
     data = await apiJson('/api/plan', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({text}),
+      body: JSON.stringify({text: planningText}),
     });
   } catch(e){
     hideThink();
@@ -1016,6 +1080,7 @@ async function doPlan(text){
   S.scene         = data.intent.scene;
   S.plans         = data.plans;
   S.currentIntent = data.intent;
+  updatePlanningMemory(text, data);
 
   // 渲染右侧分析面板（含推理步骤）
   renderAnalysisPanel(data.intent, data.reasoning_steps);
@@ -2188,7 +2253,7 @@ function truncate(str, max){ return str.length > max ? str.slice(0, max) + '…'
 // ===== 追问 Leo =====
 let askContext='';
 function openAsk(){
-  askContext = S.planSummary;
+  askContext = [S.planSummary, planningMemorySummary()].filter(Boolean).join('\n');
   switchPage('assistant');
   setTimeout(()=>askInput?.focus(), 60);
 }
