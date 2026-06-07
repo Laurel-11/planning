@@ -383,26 +383,42 @@ async function callDeepSeek(systemPrompt, userContent, jsonMode = false, maxToke
   return d.content;
 }
 
+function inferIntentFast(text){
+  const value = String(text || '');
+  const hasChild = /孩子|娃|宝宝|儿子|女儿|小孩|亲子/.test(value);
+  const hasSpouse = /老婆|老公|妻子|丈夫|爱人|媳妇/.test(value);
+  const hasFriends = /朋友|同事|聚会|团建|哥们|姐妹/.test(value);
+  const scene = hasChild || hasSpouse ? 'family' : hasFriends ? 'friends' : 'solo';
+  const partyMatch = value.match(/(?:总共|一共)?\s*(\d+)\s*个?人/);
+  const hourMatch = value.match(/(\d+)\s*个?小时/);
+  const childAgeMatch = value.match(/(\d+)\s*岁/);
+  const lowCal = /减肥|减脂|瘦身|低卡|轻食/.test(value);
+  return {
+    scene,
+    party_size: partyMatch ? Number(partyMatch[1]) : scene === 'family' ? 3 : scene === 'friends' ? 4 : 1,
+    duration_hours: hourMatch ? Number(hourMatch[1]) : 4,
+    has_child: hasChild,
+    child_age: childAgeMatch ? Number(childAgeMatch[1]) : (hasChild ? 5 : null),
+    spouse_diet: lowCal ? 'low_cal' : null,
+    activity_keywords: hasChild ? ['亲子', '公园'] : hasFriends ? ['展览', '运动'] : ['公园', '展览'],
+    food_keywords: lowCal ? ['轻食', '低卡'] : ['餐厅'],
+    start_time: '14:00',
+    constraints: [
+      hasChild ? '亲子友好' : '',
+      lowCal ? '低卡饮食' : '',
+      /别太远|不远|附近|近/.test(value) ? '距离近' : '',
+    ].filter(Boolean),
+  };
+}
+
 // ── 核心：用 DeepSeek + 高德 POI 生成真实规划方案 ──
 async function aiPlanFromText(userText){
   // 优先使用真实定位，兜底使用内置默认位置
   const city = S_location.city || DEFAULT_LOCATION.city;
   const loc  = getLocationPlanningName();
 
-  // Step 1: DeepSeek 提取意图关键词（快，无 POI）
-  const intentJson = await callDeepSeek(
-    `从用户描述中提取本地生活规划关键信息。只输出 JSON，不要 markdown，不要解释，不要推理过程。
-格式：
-{"scene":"family|friends|couple|solo","party_size":数字,"duration_hours":数字,
-"has_child":布尔,"child_age":数字或null,"spouse_diet":"low_cal|normal|null",
-"activity_keywords":["关键词1","关键词2"],"food_keywords":["关键词1"],
-"start_time":"HH:MM","constraints":["简要约束1","简要约束2"]}`,
-    userText,
-    true,
-    320
-  );
-  let intent;
-  try { intent = JSON.parse(intentJson); } catch(e) { intent = {}; }
+  // Step 1: 本地轻量规则提取意图，避免额外 LLM 请求。
+  const intent = inferIntentFast(userText);
 
   // Step 2: 并行搜索高德 POI（活动 + 餐厅）
   const actKeyword = (intent.activity_keywords||[]).join(' ') || '亲子乐园 公园 展览';
@@ -417,28 +433,34 @@ async function aiPlanFromText(userText){
   // Step 3: DeepSeek 结合 POI 数据生成完整方案
   const poiContext = `
 附近活动/景点（高德真实数据）：
-${actPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.rating}，人均¥${p.cost||'未知'}`).join('\n') || '暂无数据'}
+${actPois.slice(0,3).map((p,i)=>`${i+1}. ${p.name}，${p.address}，¥${p.cost||'未知'}`).join('\n') || '暂无数据'}
 
 附近餐厅（高德真实数据）：
-${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.rating}，人均¥${p.cost||'未知'}`).join('\n') || '暂无数据'}`;
+${foodPois.slice(0,3).map((p,i)=>`${i+1}. ${p.name}，${p.address}，¥${p.cost||'未知'}`).join('\n') || '暂无数据'}`;
 
   const planJson = await callDeepSeek(
-    `根据用户需求和高德 POI 数据生成 2 套本地出行方案。只输出 JSON，不要 markdown，不要解释，不要推理过程。
+    `快速生成本地出行方案。只输出 minified JSON，不要 markdown，不要解释，不要推理过程，不要自检。
 
-格式：
+schema:
 {"intent_summary":"一句话总结","constraints":[{"key":"约束名","reason":"推断原因"}],"plans":[{"id":"plan_1","title":"方案名","highlights":["亮点1","亮点2","亮点3"],"total_minutes":180,"total_cost":200,"steps":[{"order":1,"slot":"活动","time_range":"14:00-15:30","venue_name":"场所名","venue_address":"详细地址","venue_lat":40.003,"venue_lng":116.472,"why":"具体理由"}]}]}
 
-规则：优先选 POI 真实场所；POI 为空时按 ${city} ${loc} 推断真实场所和坐标；why 结合用户约束；2 套方案风格不同；total_cost 为人均元。`,
-    `用户需求：${userText}\n\n意图解析：${JSON.stringify(intent)}\n\n${poiContext}`,
+硬规则：plans=2；每个 plan 的 highlights 只写2条；每个 plan 的 steps 只写2站：活动、正餐；constraints 最多2条；所有中文字段≤18字；优先使用 POI；total_cost 为人均元。`,
+    `需求:${userText}\n城市:${city}\n位置:${loc}\n意图:${JSON.stringify(intent)}\n${poiContext}`,
     true,
-    900
+    650
   );
 
   let aiResult;
   try { aiResult = JSON.parse(planJson); } catch(e) {
     // DeepSeek 偶尔多包一层 markdown，尝试提取
     const m = planJson.match(/\{[\s\S]*\}/);
-    if(m) aiResult = JSON.parse(m[0]); else throw new Error('AI 返回格式错误');
+    try {
+      if(m) aiResult = JSON.parse(m[0]);
+      else throw e;
+    } catch(parseError) {
+      console.warn('[AI plan] invalid JSON, falling back:', parseError);
+      throw new Error('AI_JSON_ERROR');
+    }
   }
 
   // Step 4: 把 AI 结果转换成前端 Plan 标准格式
@@ -513,13 +535,20 @@ ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.r
   };
 }
 
-// ── apiJson：优先真实 AI，后端/mock 作兜底 ──
+// ── apiJson：优先真实 AI，失败时后端/mock 兜底 ──
 async function apiJson(url, options = {}){
-  // /api/plan 永远走真实 DeepSeek + 高德，不走 mock
+  // /api/plan 优先走真实 DeepSeek + 高德；模型 JSON 偶发格式错误时回到确定性后端。
   if(url.includes('/api/plan')){
     let text = '';
     try { text = JSON.parse(options.body || '{}').text || ''; } catch(e) {}
-    return aiPlanFromText(text);
+    try {
+      return await aiPlanFromText(text);
+    } catch(e) {
+      console.warn('[api/plan] AI planning failed, using fallback:', e);
+      const backendResult = await tryBackend(url, options);
+      if(backendResult) return backendResult;
+      return mockApi(url, options);
+    }
   }
 
   // /api/chat 走 DeepSeek 直接回答

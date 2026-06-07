@@ -230,17 +230,17 @@ async def api_llm(body: LLMBody):
         raise HTTPException(status_code=501, detail="LLM_API_KEY is not configured")
 
     import httpx
-    max_tokens = max(64, min(body.max_tokens, 900 if body.jsonMode else 500))
+    max_tokens = max(64, min(body.max_tokens, 700 if body.jsonMode else 320))
     system_prompt = body.systemPrompt
     if body.jsonMode:
         system_prompt = (
             f"{system_prompt}\n\n"
-            "只输出合法 JSON。不要 markdown，不要解释，不要推理过程。"
+            "只输出 minified JSON。不要 markdown，不要解释，不要推理过程，不要自检。"
         )
     else:
         system_prompt = (
             f"{system_prompt}\n\n"
-            "直接给最终答复，不要展开推理过程。"
+            "直接给最终答复，80字以内，不要推理过程。"
         )
     payload = {
         "model": settings.LLM_MODEL,
