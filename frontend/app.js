@@ -145,6 +145,56 @@ function buildMemoryAwarePlanningText(text){
   ].join('\n');
 }
 
+function mergeConstraintsForFollowUp(previous = [], current = []){
+  const blocked = /单人|独自|亲子|孩子|双人|二人|party_size|duration_hours|用户指定duration|用户指定.*1/;
+  const merged = [];
+  previous.forEach(item => {
+    if(!item) return;
+    const key = item.key || item.reason;
+    if(merged.some(existing => (existing.key || existing.reason) === key)) return;
+    merged.push(item);
+  });
+  current.forEach(item => {
+    if(!item) return;
+    const reason = String(item.reason || item.key || '');
+    if(blocked.test(reason)) return;
+    const key = item.key || reason;
+    if(merged.some(existing => (existing.key || existing.reason) === key)) return;
+    merged.push(item);
+  });
+  return merged;
+}
+
+function normalizeFollowUpPlanData(data, wasFollowUp){
+  if(!wasFollowUp || !S.planningMemory?.intent || !data?.intent) return data;
+  const previous = S.planningMemory.intent;
+  const fixedIntent = {
+    ...data.intent,
+    scene: previous.scene,
+    members: previous.members || [],
+    party_size: previous.party_size,
+    duration_hours: previous.duration_hours,
+    start_time: previous.start_time || data.intent.start_time,
+    location: previous.location || data.intent.location,
+    raw_text: data.intent.raw_text,
+    constraints: mergeConstraintsForFollowUp(previous.constraints || [], data.intent.constraints || []),
+  };
+  const fixedReasoning = (data.reasoning_steps || []).map(step => {
+    if(step.title === '识别场景'){
+      return {
+        ...step,
+        detail: `${sceneLabel(fixedIntent)}，目标时长约 ${fixedIntent.duration_hours || 4} 小时`,
+      };
+    }
+    if(step.title === '约束推断'){
+      const details = (fixedIntent.constraints || []).map(c => c.reason).filter(Boolean).slice(0, 2).join('；');
+      return { ...step, detail: details || '沿用上一轮约束' };
+    }
+    return step;
+  });
+  return { ...data, intent: fixedIntent, reasoning_steps: fixedReasoning };
+}
+
 function updatePlanningMemory(userText, data){
   if(!data?.intent || !Array.isArray(data?.plans)) return;
   S.planningMemory = {
@@ -1049,6 +1099,7 @@ async function doPlan(text){
   msgUser(text);
   $('examples')?.remove();
   showThink('Leo 正在理解你的需求，推断隐藏偏好…');
+  const wasFollowUp = isPlanningFollowUp(text);
   const planningText = buildMemoryAwarePlanningText(text);
 
   let data;
@@ -1075,6 +1126,7 @@ async function doPlan(text){
     return;
   }
   hideThink();
+  data = normalizeFollowUpPlanData(data, wasFollowUp);
 
   S.sessionId     = data.session_id;
   S.scene         = data.intent.scene;
@@ -2287,26 +2339,85 @@ const HOLIDAYS = [
   { month:1,  day:1,  name:'元旦',     emoji:'🎊', hint:'新年快乐！Leo 帮你开启新一年的第一次出行 🎉' },
   { month:2,  day:14, name:'情人节',   emoji:'💕', hint:'情人节快乐！今天特别推荐适合二人的浪漫场所' },
   { month:3,  day:8,  name:'妇女节',   emoji:'🌺', hint:'女神节快乐！今天帮你安排一场专属的宠爱之行' },
-  { month:4,  day:1,  name:'愚人节',   emoji:'😄', hint:'今天是愚人节，不开玩笑，Leo 认真帮你规划！' },
   { month:5,  day:1,  name:'劳动节',   emoji:'🌼', hint:'五一快乐！假期出行高峰，Leo 帮你找到人少的好去处' },
   { month:5,  day:20, name:'520',      emoji:'💌', hint:'520 快乐！今天特别推荐适合两个人的甜蜜出行' },
   { month:6,  day:1,  name:'儿童节',   emoji:'🎈', hint:'儿童节快乐！今天 Leo 优先推荐孩子最爱的活动' },
-  { month:7,  day:7,  name:'七夕',     emoji:'🌙', hint:'七夕快乐！Leo 为你精心挑选了浪漫的夜间场所' },
-  { month:8,  day:10, name:'父亲节',   emoji:'👨', hint:'父亲节快乐！今天帮你安排一场专属爸爸的出行' },
-  { month:9,  day:9,  name:'重阳节',   emoji:'🍂', hint:'重阳节快乐！适合带长辈出门走走的一天' },
   { month:10, day:1,  name:'国庆节',   emoji:'🎑', hint:'国庆快乐！假期出行人多，Leo 帮你避开人潮' },
   { month:12, day:24, name:'平安夜',   emoji:'🎄', hint:'平安夜快乐！圣诞氛围正浓，适合出门感受节日气氛' },
   { month:12, day:25, name:'圣诞节',   emoji:'🎅', hint:'圣诞快乐！Leo 帮你找到最有节日感的打卡地点' },
 ];
 
+const LUNAR_HOLIDAYS = [
+  { lunarMonth:1, day:1,  name:'春节',   emoji:'🧧', hint:'春节快乐！Leo 帮你安排一场热热闹闹的新春出行' },
+  { lunarMonth:1, day:15, name:'元宵节', emoji:'🏮', hint:'元宵节快乐！适合看灯、散步和吃点甜甜的汤圆' },
+  { lunarMonth:5, day:5,  name:'端午节', emoji:'🐉', hint:'端午安康！今天适合安排有民俗氛围或轻松散步的行程' },
+  { lunarMonth:7, day:7,  name:'七夕',   emoji:'🌙', hint:'七夕快乐！Leo 为你精心挑选了浪漫的夜间场所' },
+  { lunarMonth:8, day:15, name:'中秋节', emoji:'🥮', hint:'中秋快乐！今天适合赏月、团聚和轻松散步' },
+];
+
 let S_holiday = null;  // 当日节日信息（null 表示普通日）
+
+function nthWeekdayOfMonth(year, month, weekday, nth){
+  const first = new Date(year, month - 1, 1);
+  const offset = (weekday - first.getDay() + 7) % 7;
+  return 1 + offset + (nth - 1) * 7;
+}
+
+function dynamicHoliday(now){
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const motherDay = nthWeekdayOfMonth(year, 5, 0, 2);
+  const fatherDay = nthWeekdayOfMonth(year, 6, 0, 3);
+  if(month === 5 && day === motherDay){
+    return { month, day, name:'母亲节', emoji:'🌷', hint:'母亲节快乐！今天帮你安排一场温柔又舒心的陪伴之行' };
+  }
+  if(month === 6 && day === fatherDay){
+    return { month, day, name:'父亲节', emoji:'👨', hint:'父亲节快乐！今天帮你安排一场专属爸爸的出行' };
+  }
+  return null;
+}
+
+function lunarDateParts(now){
+  try {
+    const formatter = new Intl.DateTimeFormat('zh-CN-u-ca-chinese', {
+      month: 'long',
+      day: 'numeric',
+    });
+    const parts = formatter.formatToParts(now);
+    const rawMonth = parts.find(part => part.type === 'month')?.value || '';
+    const rawDay = parts.find(part => part.type === 'day')?.value || '';
+    const monthNames = {
+      '正月': 1, '一月': 1, '二月': 2, '三月': 3, '四月': 4,
+      '五月': 5, '六月': 6, '七月': 7, '八月': 8, '九月': 9,
+      '十月': 10, '冬月': 11, '十一月': 11, '腊月': 12, '十二月': 12,
+    };
+    const normalizedMonth = rawMonth.replace(/^闰/, '');
+    const lunarMonth = monthNames[normalizedMonth];
+    const day = Number.parseInt(rawDay, 10);
+    if(!lunarMonth || !day) return null;
+    return { lunarMonth, day, isLeapMonth: rawMonth.startsWith('闰') };
+  } catch(e) {
+    return null;
+  }
+}
+
+function lunarHoliday(now){
+  const lunar = lunarDateParts(now);
+  if(!lunar || lunar.isLeapMonth) return null;
+  return LUNAR_HOLIDAYS.find(h => h.lunarMonth === lunar.lunarMonth && h.day === lunar.day) || null;
+}
 
 function detectHoliday(){
   const now = new Date();
   const m = now.getMonth() + 1;
   const d = now.getDate();
-  S_holiday = HOLIDAYS.find(h => h.month === m && h.day === d) || null;
+  S_holiday = lunarHoliday(now) || HOLIDAYS.find(h => h.month === m && h.day === d) || dynamicHoliday(now);
   return S_holiday;
+}
+
+function holidayPromptContext(){
+  return S_holiday ? `（今天是${S_holiday.name}${S_holiday.emoji}，方案标题和推荐理由请融入节日氛围，优先推荐适合${S_holiday.name}的场所）` : '';
 }
 
 // ===== 天气感知：更新欢迎气泡 + 注入规划上下文 =====
@@ -2477,7 +2588,7 @@ window.aiPlanFromText = async function(userText){
     ? `（用户当前位置：${S_location.district}，城市：${S_location.city}）`
     : '';
   const weatherInfo = S_weather ? `（当前天气：${S_weather}）` : '';
-  const holidayInfo = S_holiday ? `（今天是${S_holiday.name}${S_holiday.emoji}，方案标题和推荐理由请融入节日氛围，优先推荐适合${S_holiday.name}的场所）` : '';
+  const holidayInfo = holidayPromptContext();
   return _origAiPlan(userText + locInfo + weatherInfo + holidayInfo);
 };
 
