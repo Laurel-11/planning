@@ -1,6 +1,6 @@
 """接力适配层：产品核心创新。
 
-当小明把手机递给老婆/朋友时，不让对方看同一个界面重新理解，
+当用户把手机递给 TA/朋友时，不让对方看同一个界面重新理解，
 而是自动切换"视角"，用对方最关心的维度重新渲染方案，并解释
 "这是专门为你考虑的"——降低群体决策摩擦，提升方案通过率。
 
@@ -34,7 +34,7 @@ def _self_card(plan: Plan) -> RelayCard:
 
 
 def _spouse_card(plan: Plan) -> RelayCard:
-    """配偶视角：突出'专门为你/孩子考虑'的体贴点。"""
+    """同行者视角：突出'专门为你/孩子考虑'的体贴点。"""
     focus: list[str] = []
     for step in plan.steps:
         v = step.venue
@@ -49,7 +49,7 @@ def _spouse_card(plan: Plan) -> RelayCard:
         focus = plan.highlights
     return RelayCard(
         audience=Audience.SPOUSE,
-        headline="他给你和宝宝选了这个下午，专门考虑了这些👇",
+        headline="这份方案已经专门考虑了这些👇",
         plan_id=plan.id, focus_points=focus,
         quick_actions=["就这个！", "换个餐厅", "我有更好的想法"],
     )

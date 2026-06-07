@@ -105,7 +105,7 @@ function isPlanningFollowUp(text){
   const value = String(text || '').trim();
   if(!S.planningMemory || !value) return false;
   const followUpPattern = /换(一个|一版|一套|个|地方)?|重新(来|规划|安排)|再(来|推荐|换)|不(喜欢|满意|合适)|别的|另一个|还有吗|还有别的吗|太远|太贵|便宜点|近一点|室内|户外|清淡点|低卡|不要/;
-  const explicitNewStart = /重新开始|新需求|换个城市|改成(北京|上海|广州|深圳|杭州|成都|南京|天津|重庆|西安)|我一个人|单人|带孩子|亲子|和孩子|和老婆|和老公|和朋友|总共\s*\d+\s*个?人/;
+  const explicitNewStart = /重新开始|新需求|换个城市|改成(北京|上海|广州|深圳|杭州|成都|南京|天津|重庆|西安)|我一个人|单人|带孩子|亲子|和孩子|和老婆|和老公|和伴侣|和爱人|和对象|和朋友|总共\s*\d+\s*个?人/;
   return followUpPattern.test(value) && (!explicitNewStart.test(value) || /换|不要|太远|太贵|近一点|便宜点/.test(value));
 }
 
@@ -512,6 +512,7 @@ async function aiPlanFromText(userText){
     `你是本地生活规划助手，从用户描述中提取关键信息，返回 JSON，格式：
 {"scene":"family|friends|couple|solo","party_size":数字,"duration_hours":数字,
 "has_child":布尔,"child_age":数字或null,"spouse_diet":"low_cal|normal|null",
+"has_family_relative":布尔,"family_relation_keywords":["父母","爷爷奶奶"],
 "activity_keywords":["关键词1","关键词2"],"food_keywords":["关键词1"],
 "start_time":"HH:MM","constraints":["简要约束1","简要约束2"]}`,
     userText,
@@ -591,8 +592,11 @@ ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.r
 
   // Step 5: 转换 intent 结构
   const members = [];
+  const rawPartner = /伴侣|爱人|对象|老婆|老公|妻子|丈夫|媳妇/.test(userText);
+  const rawRelative = /家人|亲人|父母|爸妈|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|长辈|老人|兄弟姐妹|哥哥|姐姐|弟弟|妹妹/.test(userText);
   if(intent.scene === 'family'){
-    if(intent.spouse_diet) members.push({ role:'spouse', note: intent.spouse_diet === 'low_cal' ? '最近在减肥' : '' });
+    if(intent.spouse_diet || rawPartner) members.push({ role:'spouse', note: intent.spouse_diet === 'low_cal' ? '最近在减肥' : '' });
+    if(intent.has_family_relative || rawRelative) members.push({ role:'relative', note: (intent.family_relation_keywords || []).join('、') || '家人同行' });
     if(intent.has_child)   members.push({ role:'child', age: intent.child_age || 5 });
   }
 
@@ -713,9 +717,12 @@ const MOCK_SPOTS = DEFAULT_DISCOVER_SPOTS;
 
 function mockPlanResponse(text = ''){
   const isFriends = /朋友|同事|聚会|团建|哥们|姐妹|4|四/.test(text);
-  const isFamily = /老婆|老公|孩子|宝宝|家庭|亲子|妻子|丈夫/.test(text);
+  const hasPartner = /老婆|老公|伴侣|爱人|对象|妻子|丈夫/.test(text);
+  const hasChild = /孩子|宝宝|娃|儿子|女儿|小孩|亲子/.test(text);
+  const hasRelative = /家人|亲人|父母|爸妈|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|长辈|老人|兄弟姐妹|哥哥|姐姐|弟弟|妹妹/.test(text);
+  const isFamily = hasPartner || hasChild || hasRelative || /家庭/.test(text);
   const scene = isFamily ? 'family' : isFriends ? 'friends' : 'solo';
-  const partySize = isFamily ? 3 : isFriends ? 4 : 1;
+  const partySize = isFamily ? (hasChild && !hasPartner && !hasRelative ? 2 : 3) : isFriends ? 4 : 1;
   const activity = {
     id:'mock_activity', name:'中山公园轻松散步', category:'亲子活动',
     distance_km:1.2, travel_minutes:12, rating:4.7, price_per_person:88,
@@ -750,7 +757,13 @@ function mockPlanResponse(text = ''){
     session_id:'file_demo',
     intent:{
       scene,
-      members: scene === 'family' ? [{role:'spouse',note:'最近在减肥'},{role:'child',age:5}] : [],
+      members: scene === 'family'
+        ? [
+            hasPartner ? {role:'spouse',note:'最近在减肥'} : null,
+            hasRelative ? {role:'relative',note:'家人同行'} : null,
+            hasChild ? {role:'child',age:5} : null,
+          ].filter(Boolean)
+        : [],
       party_size: partySize,
       duration_hours:3.5,
       start_time:'14:30',
@@ -759,7 +772,7 @@ function mockPlanResponse(text = ''){
       constraints:[
         {key:'max_travel_minutes',value:'15',source:'inferred',reason:'你提到别太远，优先选 15 分钟内'},
         {key:'kid_friendly',value:'true',source:'inferred',reason:'同行有 5 岁孩子，需要亲子友好'},
-        {key:'low_cal_diet',value:'true',source:'inferred',reason:'老婆最近在减肥，晚餐优先轻食低卡'}
+        {key:'low_cal_diet',value:'true',source:'inferred',reason:'同行伴侣有减脂需求，晚餐优先轻食低卡'}
       ]
     },
     plans:[plan],
@@ -797,7 +810,7 @@ function mockApi(url, options){
     }).filter(Boolean);
     return {
       audience,
-      headline: isFriends ? '周末局安排上了，看看这个行程👇' : '他给你精心挑选了这个方案，专门考虑了这些👇',
+      headline: isFriends ? '周末局安排上了，看看这个行程👇' : '这份方案已经专门考虑了这些👇',
       plan_id: plan?.id || '',
       focus_points: focus.length ? focus : ['方案已为你量身定制'],
       quick_actions: isFriends
@@ -1153,6 +1166,25 @@ function sceneLabel(intent){
   return `朋友局 ${intent.party_size} 人`;
 }
 
+function relayTargetForIntent(intent = S.currentIntent){
+  if(!intent || intent.scene === 'solo') return null;
+  if(intent.scene === 'friends') return { audience: 'friends', label: '朋友' };
+
+  const members = intent.members || [];
+  const rawText = `${intent.raw_text || ''} ${S.planningMemory?.userText || ''}`;
+  const hasChild = members.some(m => m.role === 'child') || /孩子|娃|宝宝|儿子|女儿|小孩/.test(rawText);
+  const hasPartner = members.some(m => m.role === 'spouse') || /伴侣|爱人|对象|老婆|老公|妻子|丈夫|媳妇/.test(rawText);
+  const hasRelative = members.some(m => ['parent','elder','relative','family'].includes(m.role)) ||
+    /家人|亲人|父母|爸妈|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|长辈|老人|兄弟姐妹|哥哥|姐姐|弟弟|妹妹/.test(rawText);
+  const partySize = Number(intent.party_size || 0);
+
+  if(hasRelative) return { audience: 'spouse', label: '家人' };
+  if(hasPartner) return { audience: 'spouse', label: 'TA' };
+  if(hasChild && partySize <= 2) return null;
+  if(intent.scene === 'family' && partySize > 2) return { audience: 'spouse', label: '家人' };
+  return null;
+}
+
 // ===== 右侧分析面板（桌面专用）=====
 const consMap = {
   max_travel_minutes:'出行距离', kid_friendly:'亲子友好',
@@ -1306,12 +1338,11 @@ function renderPlan(plan, recommended){
     </div>`).join('');
 
   const tags = planRef.highlights.map(h=>`<span class="t">${esc(h)}</span>`).join('');
-  const aud      = S.scene==='friends'?'friends':'spouse';
-  const audLabel = S.scene==='friends'?'朋友':'老婆';
-  const showRelay = S.scene !== 'solo';
+  const relayTarget = relayTargetForIntent(S.currentIntent);
+  const showRelay = Boolean(relayTarget);
   const relayHtml = showRelay ? `
       <div class="relay-trigger">
-        <button class="rt">📲 递给${audLabel}一起看</button>
+        <button class="rt">📲 递给${relayTarget.label}一起看</button>
       </div>` : '';
 
   const n = node(`<div class="msg bot" style="max-width:100%;width:100%;gap:6px">
@@ -1331,7 +1362,7 @@ function renderPlan(plan, recommended){
       </div>
     </div></div>`);
 
-  if(showRelay) n.querySelector('.rt').onclick = () => openRelay(planRef, aud);
+  if(showRelay) n.querySelector('.rt').onclick = () => openRelay(planRef, relayTarget.audience, relayTarget.label);
   n.querySelector('.js-map').onclick  = () => loadPlanToMap(planRef);
   n.querySelector('.js-choose').onclick = () => choosePlan(planRef);
 
@@ -1991,7 +2022,7 @@ window.histView = (id)=>{
   if(h){ S.currentPlan=h.plan; switchPage('map'); }
 };
 // ===== 接力浮层 =====
-async function openRelay(plan, audience){
+async function openRelay(plan, audience, audienceLabel = audience === 'friends' ? '朋友' : 'TA'){
   S.currentPlan = plan;
   try {
     const card = await apiJson('/api/relay',{
@@ -2005,12 +2036,12 @@ async function openRelay(plan, audience){
       <div class="rh">${esc(card.headline)}</div>
       ${focus}
       <div class="ractions">${actions}</div>
-      <div class="relay-hint">把手机递给${audience==='friends'?'朋友':'TA'}，一键拍板 ✓</div>`;
+      <div class="relay-hint">把手机递给${esc(audienceLabel)}，一键拍板 ✓</div>`;
     relayCard.querySelectorAll('.ra').forEach(btn=>{
       btn.onclick=()=>{
         relayMask.hidden=true;
         if(+btn.dataset.i===0){
-          msgBot(`✅ ${audience==='friends'?'朋友':'老婆'}同意了！那就按「${esc(card.quick_actions[0])}」执行。`);
+          msgBot(`✅ ${esc(audienceLabel)}同意了！那就按「${esc(card.quick_actions[0])}」执行。`);
           choosePlan(plan);
         } else {
           msgBot(`收到！「${esc(card.quick_actions[+btn.dataset.i])}」—— 告诉 Leo 新的要求，重新规划一版。`);

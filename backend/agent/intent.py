@@ -5,7 +5,7 @@
 2. 若启用 LLM，用其结果补全/校正规则的盲区（可选增强）。
 
 规则引擎覆盖赛题两个场景：
-- 家庭：孩子5岁、老婆减肥
+- 家庭：孩子5岁、伴侣减脂
 - 朋友：4人、2男2女
 """
 from __future__ import annotations
@@ -45,15 +45,18 @@ def _extract_members(text: str) -> tuple[Scene, list[Member]]:
     members: list[Member] = []
     scene = Scene.UNKNOWN
 
-    has_spouse = bool(re.search(r"老婆|妻子|爱人|媳妇|老公|丈夫", text))
+    has_spouse = bool(re.search(r"老婆|妻子|爱人|媳妇|老公|丈夫|伴侣|对象", text))
     has_child = bool(re.search(r"孩子|娃|宝宝|儿子|女儿|小孩", text))
+    has_relative = bool(re.search(r"家人|亲人|父母|爸妈|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|长辈|老人|兄弟姐妹|哥哥|姐姐|弟弟|妹妹", text))
     has_friend = bool(re.search(r"朋友|哥们|姐妹|同事", text))
 
-    if has_spouse or has_child:
+    if has_spouse or has_child or has_relative:
         scene = Scene.FAMILY
         if has_spouse:
             note = "最近在减肥" if re.search(r"减肥|减脂|瘦身", text) else None
             members.append(Member(role="spouse", note=note))
+        if has_relative:
+            members.append(Member(role="relative", note="家人同行"))
         if has_child:
             age = None
             m = re.search(r"(\d+|[一二两三四五六七八九十])\s*岁", text)
@@ -77,7 +80,7 @@ def _extract_party_size(text: str, scene: Scene, members: list[Member]) -> int:
         if n:
             return n
     if scene == Scene.FAMILY:
-        # 发起人 + 配偶 + 孩子
+        # 发起人 + 结构化识别出的同行成员
         return 1 + len(members)
     if scene == Scene.FRIENDS:
         return 4  # 赛题默认朋友场景 4 人
@@ -106,7 +109,7 @@ async def parse_intent(req: UserRequest) -> ParsedIntent:
     if llm.enabled and intent.scene in (Scene.UNKNOWN, Scene.SOLO):
         system = ("你是出行意图解析器。从用户中文输入中提取 JSON："
                   '{"scene":"family|friends|couple|solo","party_size":int,'
-                  '"duration_hours":float,"members":[{"role":"spouse|child|friend","age":int|null,"note":str|null}]}')
+                  '"duration_hours":float,"members":[{"role":"spouse|child|relative|friend","age":int|null,"note":str|null}]}')
         data = await llm.complete_json(system, req.text)
         if data:
             try:

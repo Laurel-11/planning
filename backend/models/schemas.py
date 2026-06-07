@@ -36,7 +36,7 @@ class Audience(str, Enum):
 
 class UserRequest(BaseModel):
     """用户的原始自然语言请求。"""
-    text: str = Field(..., description="自然语言目标，如'今天下午想和老婆孩子出去玩几个小时'")
+    text: str = Field(..., description="自然语言目标，如'今天下午想和伴侣孩子出去玩几个小时'")
     location: Optional[str] = Field(None, description="用户当前位置，缺省用配置默认值")
     party_size: Optional[int] = Field(None, description="人数，缺省由意图解析推断")
 
