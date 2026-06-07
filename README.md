@@ -154,7 +154,7 @@ http://localhost:8080
 ```env
 LLM_API_KEY=
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=deepseek-chat
 SIMULATE_LATENCY=1
 
 API_BASE_URL=

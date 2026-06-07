@@ -21,11 +21,7 @@ class LLMClient:
         if not self.enabled:
             return None
         try:
-            system = (
-                f"{system}\n\n"
-                "只输出一个紧凑 JSON 对象。不要 markdown，不要解释，不要输出推理过程。"
-            )
-            text = await self._call(system, user, max_tokens=320, json_mode=True)
+            text = await self._call(system, user)
             # 容错：截取首个 { 到末个 } 之间的内容
             start, end = text.find("{"), text.rfind("}")
             if start == -1 or end == -1:
@@ -39,16 +35,11 @@ class LLMClient:
         if not self.enabled:
             return None
         try:
-            system = (
-                f"{system}\n\n"
-                "直接给最终答复，不要展开推理过程。"
-            )
-            return await self._call(system, user, max_tokens=320)
+            return await self._call(system, user)
         except Exception:
             return None
 
-    async def _call(self, system: str, user: str, max_tokens: int = 512,
-                    json_mode: bool = False) -> str:
+    async def _call(self, system: str, user: str) -> str:
         """调用 OpenAI 兼容格式 API（DeepSeek / OpenAI 均可）。"""
         import httpx
 
@@ -58,14 +49,12 @@ class LLMClient:
         }
         payload = {
             "model": settings.LLM_MODEL,
-            "max_tokens": max_tokens,
+            "max_tokens": 1024,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{settings.LLM_BASE_URL}/chat/completions",

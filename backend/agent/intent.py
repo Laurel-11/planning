@@ -104,8 +104,7 @@ async def parse_intent(req: UserRequest) -> ParsedIntent:
 
     # LLM 增强：仅在规则识别为 UNKNOWN/SOLO 等低置信场景时尝试补全
     if llm.enabled and intent.scene in (Scene.UNKNOWN, Scene.SOLO):
-        system = ("提取出行意图。只输出 JSON，不要解释，不要推理过程。"
-                  "schema:"
+        system = ("你是出行意图解析器。从用户中文输入中提取 JSON："
                   '{"scene":"family|friends|couple|solo","party_size":int,'
                   '"duration_hours":float,"members":[{"role":"spouse|child|friend","age":int|null,"note":str|null}]}')
         data = await llm.complete_json(system, req.text)

@@ -88,7 +88,7 @@ class LLMBody(BaseModel):
     systemPrompt: str
     userContent: str
     jsonMode: bool = False
-    max_tokens: int = 768
+    max_tokens: int = 2048
 
 
 class AuthBody(BaseModel):
@@ -208,8 +208,8 @@ async def api_execute(body: ExecuteBody):
 async def api_chat(body: ChatBody):
     """自由追问接口：用 DeepSeek 直接回答关于活动/餐厅/路线的问题。"""
     system = (
-        "你是「Leisure Done」本地生活助手 Leo。"
-        "直接回答，控制在80字以内，不要推理过程。"
+        "你是「Leisure Done」本地生活助手 Leo，帮用户规划本地生活活动。"
+        "回答简洁、有用，控制在150字以内，语气轻松。"
         "如果提到产品名，只使用 Leisure Done，不要说“闲时达”。"
         "如果用户问路线，给出步行/骑行建议和大概时间，不要说'打开地图'，"
         "因为页面上有内置地图。如果上下文中有方案信息，结合方案回答。"
@@ -230,23 +230,11 @@ async def api_llm(body: LLMBody):
         raise HTTPException(status_code=501, detail="LLM_API_KEY is not configured")
 
     import httpx
-    max_tokens = max(64, min(body.max_tokens, 900 if body.jsonMode else 500))
-    system_prompt = body.systemPrompt
-    if body.jsonMode:
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            "只输出合法 JSON。不要 markdown，不要解释，不要推理过程。"
-        )
-    else:
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            "直接给最终答复，不要展开推理过程。"
-        )
     payload = {
         "model": settings.LLM_MODEL,
-        "max_tokens": max_tokens,
+        "max_tokens": body.max_tokens,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": body.systemPrompt},
             {"role": "user", "content": body.userContent},
         ],
     }

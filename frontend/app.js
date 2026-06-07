@@ -353,14 +353,14 @@ async function amapPoiAround(point, types = '', keywords = '', radius = 3000, of
 }
 
 // ── DeepSeek 直接调用 ──
-async function callDeepSeek(systemPrompt, userContent, jsonMode = false, maxTokens = null){
+async function callDeepSeek(systemPrompt, userContent, jsonMode = false){
   // file:// 协议下 fetch 会被浏览器 CORS 拦截，提前拦截给友好提示
   if(window.location.protocol === 'file:'){
     throw new Error('FILE_PROTOCOL');
   }
 
   const body = {
-    max_tokens: maxTokens || (jsonMode ? 768 : 320),
+    max_tokens: 2048,
     systemPrompt,
     userContent,
     jsonMode,
@@ -391,15 +391,13 @@ async function aiPlanFromText(userText){
 
   // Step 1: DeepSeek 提取意图关键词（快，无 POI）
   const intentJson = await callDeepSeek(
-    `从用户描述中提取本地生活规划关键信息。只输出 JSON，不要 markdown，不要解释，不要推理过程。
-格式：
+    `你是本地生活规划助手，从用户描述中提取关键信息，返回 JSON，格式：
 {"scene":"family|friends|couple|solo","party_size":数字,"duration_hours":数字,
 "has_child":布尔,"child_age":数字或null,"spouse_diet":"low_cal|normal|null",
 "activity_keywords":["关键词1","关键词2"],"food_keywords":["关键词1"],
 "start_time":"HH:MM","constraints":["简要约束1","简要约束2"]}`,
     userText,
-    true,
-    320
+    true
   );
   let intent;
   try { intent = JSON.parse(intentJson); } catch(e) { intent = {}; }
@@ -423,15 +421,14 @@ ${actPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.ra
 ${foodPois.slice(0,5).map((p,i)=>`${i+1}. ${p.name}，${p.address}，评分${p.rating}，人均¥${p.cost||'未知'}`).join('\n') || '暂无数据'}`;
 
   const planJson = await callDeepSeek(
-    `根据用户需求和高德 POI 数据生成 2 套本地出行方案。只输出 JSON，不要 markdown，不要解释，不要推理过程。
+    `你是「Leisure Done」本地生活规划 AI Leo。根据用户需求和高德 POI 数据，生成 2 套个性化出行方案。
 
-格式：
+只返回纯 JSON（不要任何 markdown 代码块），格式如下：
 {"intent_summary":"一句话总结","constraints":[{"key":"约束名","reason":"推断原因"}],"plans":[{"id":"plan_1","title":"方案名","highlights":["亮点1","亮点2","亮点3"],"total_minutes":180,"total_cost":200,"steps":[{"order":1,"slot":"活动","time_range":"14:00-15:30","venue_name":"场所名","venue_address":"详细地址","venue_lat":40.003,"venue_lng":116.472,"why":"具体理由"}]}]}
 
-规则：优先选 POI 真实场所；POI 为空时按 ${city} ${loc} 推断真实场所和坐标；why 结合用户约束；2 套方案风格不同；total_cost 为人均元。`,
+规则：①优先从 POI 数据选真实场所 ②POI 为空时用你对用户当前位置（${city} ${loc}）的知识推断真实场所和准确坐标 ③why 必须结合用户约束 ④生成 2 套风格不同方案 ⑤total_cost 是整个行程人均费用（元）。`,
     `用户需求：${userText}\n\n意图解析：${JSON.stringify(intent)}\n\n${poiContext}`,
-    true,
-    900
+    true
   );
 
   let aiResult;
@@ -1248,10 +1245,8 @@ async function triggerStepReplace(planRef, stepIdx, btn){
 [{"name":"场所名","address":"地址","why":"推荐理由（结合原方案约束：${planRef.highlights?.join('、')||''}）","lat":40.001,"lng":116.470}]`;
 
     const reply = await callDeepSeek(
-      '只输出 JSON 数组，不要 markdown，不要解释，不要推理过程。',
-      prompt,
-      true,
-      450
+      '你是本地生活规划 AI Leo，只返回纯 JSON 数组，不要 markdown 代码块。',
+      prompt
     );
     let alts = [];
     try {

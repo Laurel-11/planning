@@ -5,12 +5,12 @@ export async function onRequestPost({ request, env }) {
   const body = await request.json().catch(() => ({}));
   const base = (env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/+$/, "");
   const payload = {
-    model: env.LLM_MODEL || "deepseek-v4-flash",
-    max_tokens: 220,
+    model: env.LLM_MODEL || "deepseek-chat",
+    max_tokens: 600,
     messages: [
       {
         role: "system",
-        content: "你是「Leisure Done」本地生活助手 Leo。直接回答，80字以内，不要推理过程。如果提到产品名，只使用 Leisure Done，不要说“闲时达”。",
+        content: "你是「Leisure Done」本地生活助手 Leo。回答简洁、有用，控制在150字以内。如果提到产品名，只使用 Leisure Done，不要说“闲时达”。",
       },
       {
         role: "user",
@@ -30,3 +30,4 @@ export async function onRequestPost({ request, env }) {
   if (!upstream.ok) return json({ detail: data.error?.message || upstream.statusText }, upstream.status);
   return json({ reply: data.choices?.[0]?.message?.content || "Leo 暂时没有想到合适回答。" });
 }
+

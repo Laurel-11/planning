@@ -37,7 +37,7 @@ class Settings:
     # LLM config: DeepSeek/OpenAI-compatible APIs. Never hardcode secrets here.
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-v4-flash")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
 
     # AMap Web Service API. Server-side only: route planning, POI search, geocoding.
     AMAP_WEB_SERVICE_KEY: str = os.getenv("AMAP_WEB_SERVICE_KEY", "")
