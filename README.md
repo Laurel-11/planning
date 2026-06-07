@@ -2,11 +2,95 @@
 
 本地生活规划 demo：用户用自然语言描述下午想怎么过，系统会解析偏好、生成活动方案、展示路线地图、提供 Leo 助手追问，并支持发现页和历史行程。
 
+## 目录
+
+- [设计理念](#设计理念)
+- [Planning 策略说明](#planning-策略说明)
+- [工具调用链路](#工具调用链路)
+- [异常处理机制](#异常处理机制)
+- [网页版使用教程](#网页版使用教程)
+- [本地调试](#本地调试)
+- [环境变量](#环境变量)
+- [部署思路](#部署思路)
+- [Cloudflare Pages 配置](#cloudflare-pages-配置)
+- [路线地图](#路线地图)
+- [路线缓存](#路线缓存)
+- [项目结构](#项目结构)
+- [账号与游客访问](#账号与游客访问)
+- [主要接口](#主要接口)
+
+## 设计理念
+
+Leisure Done 的核心不是把地点列表堆给用户，而是把“今天想怎么过”翻译成一套可以直接执行的本地生活安排。它会先理解人的关系、时间、距离和隐性偏好，再把活动、餐厅、路线、天气和后续追问整合进同一个流程里。
+
+产品设计上优先做三件事：
+
+- 少打扰：用户只需要输入一句自然语言，系统主动补全约束和候选方案。
+- 可解释：每个方案都展示推荐理由，让用户知道为什么适合孩子、减脂、聚会或短途出行。
+- 可落地：方案不是停在建议层，而是继续支持路线查看、餐厅预约、购票、额外下单和行程卡汇总。
+
+技术设计上采用“规则兜底 + LLM 增强 + 工具执行”的混合 Agent 思路。规则保证没有 API key 时也能跑，LLM 用来补全模糊意图，工具层负责把方案落到地图、餐厅、票务和订单等具体能力上。
+
+## Planning 策略说明
+
+本地 FastAPI 版本的规划链路由 `backend/agent/orchestrator.py` 编排，核心路径是“理解 → 约束推断 → 多方案生成 → 接力说明 → 执行落地”。
+
+- 意图理解：`intent.py` 先用规则解析中文输入，抽取场景、成员、人数、时长和位置；当配置了 `LLM_API_KEY` 且规则结果置信度较低时，再调用 LLM 补全或校正。
+- 约束推断：`planner.infer_constraints()` 把“带 5 岁孩子”“配偶减肥”“别离家太远”等信息转成结构化约束，例如 `kid_friendly`、`low_cal_diet`、`need_kid_seat`、`max_travel_minutes`。
+- 多方案生成：`planner.build_plans()` 根据场景生成不同主题方案。家庭场景优先亲子、减脂和儿童座椅；朋友场景优先包厢、性价比和出片体验。
+- 推荐策略：当前默认推荐方案列表第一项，保证有确定性输出；如果无法识别具体场景，会回落到通用朋友聚会方案。
+- 执行策略：用户确认方案后，`executor.py` 并行处理餐厅预约、活动购票和额外商品下单，再汇总为行程卡。
+
+## 工具调用链路
+
+主要接口链路如下：
+
+```txt
+前端 app.js
+  → POST /api/plan
+  → backend/main.py
+  → orchestrator.plan()
+  → intent.parse_intent()
+  → planner.infer_constraints()
+  → planner.build_plans()
+  → tools.poi.search_activities()
+  → tools.restaurant.search_restaurants()
+  → 返回 PlanResponse
+```
+
+确认执行时：
+
+```txt
+前端 app.js
+  → POST /api/execute
+  → orchestrator.execute()
+  → executor.execute_plan()
+  → 并行调用 restaurant.reserve()、ticket.buy_tickets()、order.place_order()
+  → tools.itinerary.build_itinerary()
+  → 返回 ExecutionResult
+```
+
+其它辅助链路：
+
+- `/api/relay`：基于已选方案生成给家人、朋友或自己的接力说明卡。
+- `/api/chat`：Leo 助手自由追问，优先调用 DeepSeek/OpenAI-compatible LLM；未配置 key 时返回模板兜底。
+- `/api/amap/*`：封装高德 Web Service，用于路线、POI、逆地理和天气。
+- Cloudflare Pages 部署时，`functions/api/*` 提供同名接口，保护服务端密钥，并用 D1 保存账号和历史行程。
+
+## 异常处理机制
+
+- LLM 未配置或调用失败：`llm.complete_json()` / `complete_text()` 返回 `None`，调用方保留规则解析或模板兜底结果。
+- LLM 返回非标准 JSON：后端 LLM 封装会截取首个 `{` 到末个 `}` 后尝试解析，解析失败则忽略 LLM 结果。
+- 餐厅满位：`restaurant.reserve()` 把排队超过 35 分钟视为预约失败，执行层会自动搜索相似备选餐厅并改订；没有备选时标记为 `failed`，但不阻塞其它动作。
+- 活动售罄：`ticket.buy_tickets()` 库存不足时返回失败，执行结果给出“现场购票或更换活动”的提示。
+- 并行动作互不阻塞：预约、购票、额外商品下单通过 `asyncio.gather()` 并行执行，单项失败不会让整个执行流程崩掉。
+- 地图与路线失败：前端优先高德地图和高德路线；高德加载失败时自动切 Leaflet，路线规划失败时保留站点并展示失败提示。
+- 定位失败或用户拒绝：前端回落到默认位置，不中断规划、发现页和地图展示。
+- `file://` 直接打开：前端显示本地预览提示，不调用真实 AI、定位和地图接口，建议通过 `python serve.py` 使用 HTTP 访问。
+
 ## 网页版使用教程
 
 ### 闲时达 使用教程
-
-<small>关闭后可以点击左上角找到我 (｡•̀ᴗ-)✧</small>
 
 #### 1. 登录或游客访问
 
@@ -168,6 +252,14 @@ POST /api/amap/walking
 
 如果高德没有可用公共交通线路，则不显示公共交通部分。
 
+公共交通详情解析策略：
+
+- 高德会返回多套 `transits` 方案，系统选择 `duration` 最短的一套。
+- `walking` 段保留步行距离和时间，可用于后续展示更细的接驳说明。
+- `bus.buslines` 段会提取线路名、上车站、下车站、经过站数和耗时。
+- 线路名包含“地铁”或“轨道”时标记为 `metro`，否则标记为 `bus`。
+- 当前前端优先展示公交/地铁乘坐段，步行接驳段保留在接口返回数据中。
+
 ## 路线缓存
 
 前端会在页面内存中缓存路线规划结果：
@@ -201,7 +293,6 @@ frontend/
 
 docs/
   USER_GUIDE.md          使用教程，左上角头像弹窗同步展示
-  DESIGN.md              产品与架构设计说明
   FRONTEND_AND_PYDANTIC_NOTES.md
 
 functions/
@@ -217,7 +308,7 @@ requirements.txt         Python 依赖
 ## 账号与游客访问
 
 前端启动后会先显示登录层，用户可以登录、注册，或者选择游客访问。游客访问不会创建账号，也不会阻止原有规划、地图和发现功能。
-左上角头像会打开使用教程弹窗，内容同步维护在 `docs/USER_GUIDE.md`。
+游客访问或新用户首次注册成功后，会自动弹出网页版使用教程；左上角头像也可以随时重新打开教程，内容同步维护在 `docs/USER_GUIDE.md`。
 
 账号数据由 FastAPI 后端写入 SQLite，密码只保存 PBKDF2 哈希和盐，不保存明文。相关接口：
 
