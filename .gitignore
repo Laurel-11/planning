@@ -220,6 +220,8 @@ tempCodeRunnerFile.py
 
 # Frontend local map key
 #frontend/config.js
+frontend/assets/default-user-avatar512.png
+frontend/assets/leo-avatar512.png
 
 # Marimo
 marimo/_static/
