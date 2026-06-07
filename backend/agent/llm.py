@@ -23,9 +23,9 @@ class LLMClient:
         try:
             system = (
                 f"{system}\n\n"
-                "只输出 minified JSON 对象。不要 markdown，不要解释，不要推理过程，不要自检。"
+                "只输出一个紧凑 JSON 对象。不要 markdown，不要解释，不要输出推理过程。"
             )
-            text = await self._call(system, user, max_tokens=220, json_mode=True)
+            text = await self._call(system, user, max_tokens=320, json_mode=True)
             # 容错：截取首个 { 到末个 } 之间的内容
             start, end = text.find("{"), text.rfind("}")
             if start == -1 or end == -1:
@@ -41,9 +41,9 @@ class LLMClient:
         try:
             system = (
                 f"{system}\n\n"
-                "直接给最终答复，80字以内，不要推理过程。"
+                "直接给最终答复，不要展开推理过程。"
             )
-            return await self._call(system, user, max_tokens=220)
+            return await self._call(system, user, max_tokens=320)
         except Exception:
             return None
 

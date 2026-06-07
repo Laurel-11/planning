@@ -6,10 +6,10 @@ export async function onRequestPost({ request, env }) {
   const body = await request.json().catch(() => ({}));
   const base = (env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/+$/, "");
   const requestedTokens = Number(body.max_tokens || (body.jsonMode ? 768 : 320));
-  const maxTokens = Math.max(64, Math.min(requestedTokens, body.jsonMode ? 700 : 320));
+  const maxTokens = Math.max(64, Math.min(requestedTokens, body.jsonMode ? 900 : 500));
   const systemPrompt = body.jsonMode
-    ? `${body.systemPrompt || ""}\n\n只输出 minified JSON。不要 markdown，不要解释，不要推理过程，不要自检。`
-    : `${body.systemPrompt || ""}\n\n直接给最终答复，80字以内，不要推理过程。`;
+    ? `${body.systemPrompt || ""}\n\n只输出合法 JSON。不要 markdown，不要解释，不要推理过程。`
+    : `${body.systemPrompt || ""}\n\n直接给最终答复，不要展开推理过程。`;
   const payload = {
     model: env.LLM_MODEL || "deepseek-v4-flash",
     max_tokens: maxTokens,
