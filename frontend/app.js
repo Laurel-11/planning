@@ -109,7 +109,12 @@ function planningTimeLabel(){
 
 function renderWelcomeBubble(){
   if(!welcomeBubble) return;
-  welcomeBubble.innerHTML = `你好！我是 <strong>Leo</strong>，你的出行规划助手。<br>说说你想怎么过这个${currentDayPart()}，我来帮你安排好一切 🌿`;
+  detectHoliday();
+  if(S_holiday){
+    welcomeBubble.innerHTML = `${S_holiday.emoji} <strong>${S_holiday.name}快乐！</strong><br>${S_holiday.hint}<br><span style="color:var(--text-3);font-size:12px">告诉我你想怎么过，Leo 来帮你安排 🌿</span>`;
+  } else {
+    welcomeBubble.innerHTML = `你好！我是 <strong>Leo</strong>，你的出行规划助手。<br>说说你想怎么过这个${currentDayPart()}，我来帮你安排好一切 🌿`;
+  }
 }
 
 function syncViewportLayout(){
@@ -2002,8 +2007,183 @@ function renderExecResult(res, plan){
 
   S.currentPlan = plan;
   const delay = res.items.length * 120 + 400;
-  setTimeout(()=>msgBot('路线已就绪 🗺️　切换到「路线地图」页可查看全程和步行距离。'), delay);
+  setTimeout(()=>{
+    msgBot('路线已就绪 🗺️　切换到「路线地图」页可查看全程和步行距离。');
+    // 执行完成后提示生成海报
+    setTimeout(()=>{
+      const posterBubble = node(`<div class="msg bot" style="gap:6px">
+        <div class="leo-av-msg">L</div>
+        <div class="bubble">
+          想生成一张行程海报发朋友圈吗？
+          <div style="margin-top:8px">
+            <button class="btn btn-primary js-poster" style="width:100%;font-size:13px;padding:9px">🖼️ 生成行程海报</button>
+          </div>
+        </div>
+      </div>`);
+      posterBubble.querySelector('.js-poster').onclick = () => generatePoster(plan, res);
+      chat.appendChild(posterBubble); scrollDown();
+    }, 800);
+  }, delay);
 }
+
+// ===== 行程海报生成（Canvas） =====
+function generatePoster(plan, res){
+  const W = 750, H = 1080;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // 背景渐变
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#f0fdf8');
+  bg.addColorStop(1, '#e8f5ef');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // 顶部装饰条
+  const header = ctx.createLinearGradient(0, 0, W, 0);
+  header.addColorStop(0, '#22c98a');
+  header.addColorStop(1, '#18b67a');
+  ctx.fillStyle = header;
+  roundRect(ctx, 0, 0, W, 10, 0);
+  ctx.fill();
+
+  // Logo 区
+  ctx.fillStyle = '#22c98a';
+  ctx.font = 'bold 26px "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.fillText('闲时达 Leisure Done', 48, 72);
+
+  ctx.fillStyle = '#9ba3af';
+  ctx.font = '18px "PingFang SC", "Microsoft YaHei", sans-serif';
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
+  ctx.fillText(dateStr, 48, 100);
+
+  // 方案标题卡
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 40, 128, W - 80, 90, 16);
+  ctx.fill();
+  addShadow(ctx);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#1a1d23';
+  ctx.font = 'bold 28px "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.fillText(plan.title || '我的出行方案', 64, 174);
+
+  ctx.fillStyle = '#5f6775';
+  ctx.font = '17px "PingFang SC", "Microsoft YaHei", sans-serif';
+  const metaText = `约 ${Math.round((plan.total_minutes||180)/60)} 小时  ·  预估人均 ¥${plan.total_cost||'—'}`;
+  ctx.fillText(metaText, 64, 202);
+
+  // 步骤时间线
+  const steps = plan.steps || [];
+  const startY = 256;
+  const lineH = 120;
+  steps.forEach((step, i) => {
+    const y = startY + i * lineH;
+    const v = step.venue || {};
+
+    // 连接线
+    if(i < steps.length - 1){
+      ctx.strokeStyle = '#d1fae5';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(76, y + 44);
+      ctx.lineTo(76, y + lineH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 步骤圆点
+    ctx.fillStyle = i === 0 ? '#22c98a' : '#ff8c42';
+    ctx.beginPath();
+    ctx.arc(76, y + 28, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), 76, y + 33);
+    ctx.textAlign = 'left';
+
+    // 时间
+    ctx.fillStyle = '#22c98a';
+    ctx.font = 'bold 15px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText(step.time_range || '', 108, y + 22);
+
+    // 场所名
+    ctx.fillStyle = '#1a1d23';
+    ctx.font = 'bold 20px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText(truncate(v.name || '', 14), 108, y + 46);
+
+    // 类型标签
+    ctx.fillStyle = '#edfaf4';
+    roundRect(ctx, 108, y + 56, 70, 26, 13);
+    ctx.fill();
+    ctx.fillStyle = '#18a872';
+    ctx.font = '13px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText(step.slot || '', 120, y + 74);
+
+    // 地址
+    ctx.fillStyle = '#9ba3af';
+    ctx.font = '14px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText(truncate(v.address || '', 20), 190, y + 74);
+  });
+
+  // 底部高亮标签
+  const highlightY = startY + steps.length * lineH + 20;
+  const highlights = (plan.highlights || []).slice(0, 3);
+  let tagX = 48;
+  highlights.forEach(h => {
+    const tw = ctx.measureText(h).width + 28;
+    ctx.fillStyle = '#d1fae5';
+    roundRect(ctx, tagX, highlightY, tw, 32, 16);
+    ctx.fill();
+    ctx.fillStyle = '#18a872';
+    ctx.font = '14px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText(h, tagX + 14, highlightY + 21);
+    tagX += tw + 10;
+  });
+
+  // 底部品牌水印
+  ctx.fillStyle = '#c6f7e2';
+  ctx.font = '15px "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('由 闲时达 · Leo 规划  |  Leisure Done', W / 2, H - 36);
+  ctx.textAlign = 'left';
+
+  // 生成图片并展示
+  const dataUrl = canvas.toDataURL('image/png');
+  const wrapper = node(`<div class="msg bot" style="gap:6px">
+    <div class="leo-av-msg">L</div>
+    <div style="flex:1">
+      <div class="bubble" style="margin-bottom:8px">海报生成完成！长按或右键保存，发给朋友圈吧 🎉</div>
+      <img src="${dataUrl}" style="width:100%;max-width:320px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.12);display:block;cursor:pointer"
+           onclick="this.requestFullscreen?.()" title="点击全屏查看">
+    </div>
+  </div>`);
+  chat.appendChild(wrapper); scrollDown();
+}
+
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+function addShadow(ctx){
+  ctx.shadowColor = 'rgba(0,0,0,.06)';
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 4;
+}
+function truncate(str, max){ return str.length > max ? str.slice(0, max) + '…' : str; }
 
 // ===== 追问 Leo =====
 let askContext='';
@@ -2047,6 +2227,33 @@ function submit(){
 sendBtn.onclick=submit;
 inputEl.onkeydown=e=>{ if(e.key==='Enter') submit(); };
 document.querySelectorAll('.chip').forEach(c=>{ c.onclick=()=>doPlan(c.dataset.text); });
+
+// ===== 节日感知 =====
+const HOLIDAYS = [
+  { month:1,  day:1,  name:'元旦',     emoji:'🎊', hint:'新年快乐！Leo 帮你开启新一年的第一次出行 🎉' },
+  { month:2,  day:14, name:'情人节',   emoji:'💕', hint:'情人节快乐！今天特别推荐适合二人的浪漫场所' },
+  { month:3,  day:8,  name:'妇女节',   emoji:'🌺', hint:'女神节快乐！今天帮你安排一场专属的宠爱之行' },
+  { month:4,  day:1,  name:'愚人节',   emoji:'😄', hint:'今天是愚人节，不开玩笑，Leo 认真帮你规划！' },
+  { month:5,  day:1,  name:'劳动节',   emoji:'🌼', hint:'五一快乐！假期出行高峰，Leo 帮你找到人少的好去处' },
+  { month:5,  day:20, name:'520',      emoji:'💌', hint:'520 快乐！今天特别推荐适合两个人的甜蜜出行' },
+  { month:6,  day:1,  name:'儿童节',   emoji:'🎈', hint:'儿童节快乐！今天 Leo 优先推荐孩子最爱的活动' },
+  { month:7,  day:7,  name:'七夕',     emoji:'🌙', hint:'七夕快乐！Leo 为你精心挑选了浪漫的夜间场所' },
+  { month:8,  day:10, name:'父亲节',   emoji:'👨', hint:'父亲节快乐！今天帮你安排一场专属爸爸的出行' },
+  { month:9,  day:9,  name:'重阳节',   emoji:'🍂', hint:'重阳节快乐！适合带长辈出门走走的一天' },
+  { month:10, day:1,  name:'国庆节',   emoji:'🎑', hint:'国庆快乐！假期出行人多，Leo 帮你避开人潮' },
+  { month:12, day:24, name:'平安夜',   emoji:'🎄', hint:'平安夜快乐！圣诞氛围正浓，适合出门感受节日气氛' },
+  { month:12, day:25, name:'圣诞节',   emoji:'🎅', hint:'圣诞快乐！Leo 帮你找到最有节日感的打卡地点' },
+];
+
+let S_holiday = null;  // 当日节日信息（null 表示普通日）
+
+function detectHoliday(){
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  S_holiday = HOLIDAYS.find(h => h.month === m && h.day === d) || null;
+  return S_holiday;
+}
 
 // ===== 天气感知：更新欢迎气泡 + 注入规划上下文 =====
 let S_weather = '';   // 全局天气摘要（注入 DeepSeek prompt）
@@ -2216,7 +2423,8 @@ window.aiPlanFromText = async function(userText){
     ? `（用户当前位置：${S_location.district}，城市：${S_location.city}）`
     : '';
   const weatherInfo = S_weather ? `（当前天气：${S_weather}）` : '';
-  return _origAiPlan(userText + locInfo + weatherInfo);
+  const holidayInfo = S_holiday ? `（今天是${S_holiday.name}${S_holiday.emoji}，方案标题和推荐理由请融入节日氛围，优先推荐适合${S_holiday.name}的场所）` : '';
+  return _origAiPlan(userText + locInfo + weatherInfo + holidayInfo);
 };
 
 // ===== P2：历史行程"重新规划"升级 =====
