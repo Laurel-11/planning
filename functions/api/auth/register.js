@@ -1,8 +1,10 @@
 import {
   createSession,
+  clearFailedLogins,
   db,
   ensureAuthSchema,
   hashPassword,
+  LOGIN_FORM_ATTEMPT_KEY,
   missingDb,
   nowIso,
   publicUser,
@@ -39,9 +41,9 @@ export async function onRequestPost({ request, env }) {
       "SELECT id, username, avatar_color, created_at FROM users WHERE id = ?",
     ).bind(result.meta.last_row_id).first());
     const token = await createSession(database, user.id);
+    await clearFailedLogins(database, LOGIN_FORM_ATTEMPT_KEY);
     return json({ ok: true, user, token });
   } catch (error) {
-    return json({ detail: "Username already exists" }, 400);
+    return json({ detail: "该用户名已被使用" }, 400);
   }
 }
-

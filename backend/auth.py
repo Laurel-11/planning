@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,10 @@ AVATAR_COLORS = (
     "#f39c12", "#e67e22", "#e74c3c", "#16a085",
     "#27ae60", "#2980b9", "#8e44ad", "#d35400",
 )
+
+MAX_LOGIN_FAILURES = 5
+LOGIN_LOCK_SECONDS = 60
+LOGIN_FORM_ATTEMPT_KEY = "__login_form__"
 
 
 def _db_path() -> Path:
@@ -84,6 +88,16 @@ def init_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user_id_created_at ON trips(user_id, created_at DESC)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                username TEXT PRIMARY KEY COLLATE NOCASE,
+                failures INTEGER NOT NULL DEFAULT 0,
+                locked_until TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 def _now() -> str:
@@ -93,19 +107,73 @@ def _now() -> str:
 def _normalize_username(username: str) -> str:
     value = (username or "").strip()
     if len(value) < 3:
-        raise AuthError("Username must be at least 3 characters")
-    if len(value) > 32:
-        raise AuthError("Username cannot exceed 32 characters")
+        raise AuthError("用户名长度必须至少为 3 个字符")
+    if len(value) > 16:
+        raise AuthError("用户名长度不能超过 16 个字符")
     return value
 
 
 def _validate_password(password: str) -> str:
     value = password or ""
     if len(value) < 6:
-        raise AuthError("Password must be at least 6 characters")
-    if len(value) > 128:
-        raise AuthError("Password cannot exceed 128 characters")
+        raise AuthError("密码长度必须至少为 6 个字符")
+    if len(value) > 16:
+        raise AuthError("密码长度不能超过 16 个字符")
     return value
+
+
+def _parse_iso(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _login_lock_message(username: str) -> str:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT locked_until FROM login_attempts WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+    locked_until = _parse_iso(row["locked_until"]) if row else None
+    if not locked_until:
+        return ""
+    remaining = int((locked_until - datetime.now(timezone.utc)).total_seconds())
+    if remaining <= 0:
+        _clear_failed_logins(username)
+        return ""
+    return f"账号或密码错误次数过多，请 {remaining} 秒后再试"
+
+
+def _record_failed_login(username: str) -> str:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT failures FROM login_attempts WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+        failures = int(row["failures"] if row else 0) + 1
+        locked_until = (
+            datetime.now(timezone.utc) + timedelta(seconds=LOGIN_LOCK_SECONDS)
+        ).isoformat() if failures >= MAX_LOGIN_FAILURES else ""
+        conn.execute(
+            """
+            INSERT INTO login_attempts(username, failures, locked_until, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+              failures = excluded.failures,
+              locked_until = excluded.locked_until,
+              updated_at = excluded.updated_at
+            """,
+            (username, failures, locked_until, _now()),
+        )
+    return f"账号或密码错误次数过多，请 {LOGIN_LOCK_SECONDS} 秒后再试" if locked_until else "用户名或密码错误"
+
+
+def _clear_failed_logins(username: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM login_attempts WHERE username = ? COLLATE NOCASE", (username,))
 
 
 def _hash_password(password: str, salt_hex: str | None = None) -> tuple[str, str]:
@@ -158,25 +226,33 @@ def register_user(username: str, password: str) -> tuple[dict[str, Any], str]:
             ).fetchone()
             user = _public_user(row) if row else None
     except sqlite3.IntegrityError as exc:
-        raise AuthError("Username already exists") from exc
+        raise AuthError("该用户名已被使用") from exc
     if user is None:
-        raise AuthError("Registration failed, please try again")
+        raise AuthError("注册失败，请稍后重试")
+    _clear_failed_logins(LOGIN_FORM_ATTEMPT_KEY)
     return user, create_session(user["id"])
 
 
 def login_user(username: str, password: str) -> tuple[dict[str, Any], str]:
-    username = _normalize_username(username)
+    username = (username or "").strip()
     password = password or ""
+    locked_message = _login_lock_message(LOGIN_FORM_ATTEMPT_KEY)
+    if locked_message:
+        raise AuthError(locked_message)
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM users WHERE username = ? COLLATE NOCASE",
             (username,),
         ).fetchone()
     if row is None:
-        raise AuthError("Invalid username or password")
+        message = _record_failed_login(LOGIN_FORM_ATTEMPT_KEY)
+        if "错误次数过多" in message:
+            raise AuthError(message)
+        raise AuthError("此用户名不存在")
     expected, _ = _hash_password(password, row["password_salt"])
     if not secrets.compare_digest(expected, row["password_hash"]):
-        raise AuthError("Invalid username or password")
+        raise AuthError(_record_failed_login(LOGIN_FORM_ATTEMPT_KEY))
+    _clear_failed_logins(LOGIN_FORM_ATTEMPT_KEY)
     return _public_user(row), create_session(int(row["id"]))
 
 

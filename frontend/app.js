@@ -237,9 +237,23 @@ async function authRequest(path, options = {}){
   let data = null;
   try { data = await res.json(); } catch(e) {}
   if(!res.ok){
-    throw new Error(data?.detail || data?.message || '账号服务暂时不可用');
+    throw new Error(localizeAuthError(data?.detail || data?.message || '账号服务暂时不可用'));
   }
   return data || {};
+}
+
+function localizeAuthError(message){
+  const text = String(message || '');
+  const map = {
+    'Invalid username or password': '用户名或密码错误',
+    'Username already exists': '该用户名已被使用',
+    'Password must be at least 6 characters': '密码长度必须至少为 6 个字符',
+    'Username must be at least 3 characters': '用户名长度必须至少为 3 个字符',
+    'Username cannot exceed 32 characters': '用户名长度不能超过 16 个字符',
+    'Password cannot exceed 128 characters': '密码长度不能超过 16 个字符',
+    'Authentication required': '请先登录',
+  };
+  return map[text] || text;
 }
 
 const DEFAULT_LOCATION = {

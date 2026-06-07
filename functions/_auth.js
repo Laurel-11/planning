@@ -7,6 +7,9 @@ const AVATAR_COLORS = [
 ];
 
 const PBKDF2_ITERATIONS = 100000;
+const MAX_LOGIN_FAILURES = 5;
+const LOGIN_LOCK_MS = 60 * 1000;
+export const LOGIN_FORM_ATTEMPT_KEY = "__login_form__";
 
 export function db(env) {
   return env.DB || null;
@@ -20,6 +23,27 @@ export function bearerToken(request) {
   const value = request.headers.get("authorization") || "";
   const [scheme, token] = value.split(/\s+/, 2);
   return scheme?.toLowerCase() === "bearer" ? (token || "").trim() : "";
+}
+
+export function cookieValue(request, name) {
+  const header = request.headers.get("cookie") || "";
+  for (const part of header.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey === name) return decodeURIComponent(rawValue.join("=") || "");
+  }
+  return "";
+}
+
+export function sessionToken(request) {
+  return cookieValue(request, "session") || bearerToken(request);
+}
+
+export function sessionCookie(token) {
+  return `session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`;
+}
+
+export function clearSessionCookie() {
+  return "session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
 }
 
 export async function ensureAuthSchema(database) {
@@ -58,6 +82,14 @@ export async function ensureAuthSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_trips_user_id_created_at
     ON trips(user_id, created_at DESC)
   `).run();
+  await database.prepare(`
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      username TEXT PRIMARY KEY COLLATE NOCASE,
+      failures INTEGER NOT NULL DEFAULT 0,
+      locked_until INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
 }
 
 export function publicUser(row) {
@@ -76,16 +108,52 @@ export function nowIso() {
 
 export function validateUsername(username) {
   const value = String(username || "").trim();
-  if (value.length < 3) throw new Error("Username must be at least 3 characters");
-  if (value.length > 32) throw new Error("Username cannot exceed 32 characters");
+  if (value.length < 3) throw new Error("用户名长度必须至少为 3 个字符");
+  if (value.length > 16) throw new Error("用户名长度不能超过 16 个字符");
   return value;
 }
 
 export function validatePassword(password) {
   const value = String(password || "");
-  if (value.length < 6) throw new Error("Password must be at least 6 characters");
-  if (value.length > 128) throw new Error("Password cannot exceed 128 characters");
+  if (value.length < 6) throw new Error("密码长度必须至少为 6 个字符");
+  if (value.length > 16) throw new Error("密码长度不能超过 16 个字符");
   return value;
+}
+
+export async function loginLockMessage(database, username) {
+  const row = await database.prepare(
+    "SELECT locked_until FROM login_attempts WHERE username = ? COLLATE NOCASE",
+  ).bind(username).first();
+  const lockedUntil = Number.parseInt(row?.locked_until || "0", 10);
+  const remainingMs = lockedUntil - Date.now();
+  if (row && lockedUntil > 0 && remainingMs <= 0) {
+    await clearFailedLogins(database, username);
+    return "";
+  }
+  if (remainingMs <= 0) return "";
+  const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  return `账号或密码错误次数过多，请 ${seconds} 秒后再试`;
+}
+
+export async function recordFailedLogin(database, username) {
+  const row = await database.prepare(
+    "SELECT failures FROM login_attempts WHERE username = ? COLLATE NOCASE",
+  ).bind(username).first();
+  const failures = (Number.parseInt(row?.failures || "0", 10) || 0) + 1;
+  const lockedUntil = failures >= MAX_LOGIN_FAILURES ? Date.now() + LOGIN_LOCK_MS : 0;
+  await database.prepare(`
+    INSERT INTO login_attempts(username, failures, locked_until, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(username) DO UPDATE SET
+      failures = excluded.failures,
+      locked_until = excluded.locked_until,
+      updated_at = excluded.updated_at
+  `).bind(username, failures, lockedUntil, nowIso()).run();
+  return lockedUntil ? "账号或密码错误次数过多，请 60 秒后再试" : "用户名或密码错误";
+}
+
+export async function clearFailedLogins(database, username) {
+  await database.prepare("DELETE FROM login_attempts WHERE username = ? COLLATE NOCASE").bind(username).run();
 }
 
 export function randomToken(bytes = 32) {
@@ -163,7 +231,7 @@ export async function getUserByToken(database, token) {
 }
 
 export async function requireUser(database, request) {
-  const user = await getUserByToken(database, bearerToken(request));
-  if (!user) return { response: json({ detail: "Authentication required" }, 401), user: null };
+  const user = await getUserByToken(database, sessionToken(request));
+  if (!user) return { response: json({ detail: "请先登录" }, 401), user: null };
   return { response: null, user };
 }

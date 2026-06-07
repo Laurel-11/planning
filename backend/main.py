@@ -118,7 +118,7 @@ def _bearer_token(authorization: str = "") -> str:
 def _current_user(authorization: str = "") -> dict:
     user = get_user_by_token(_bearer_token(authorization))
     if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+        raise HTTPException(status_code=401, detail="请先登录")
     return user
 
 
